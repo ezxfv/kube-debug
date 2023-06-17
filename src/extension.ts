@@ -6,6 +6,10 @@ import * as path from 'path';
 
 //let client: LanguageClient;
 
+function sleep(ms: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export function activate(context: vscode.ExtensionContext) {
 	// gopls server options
 	// let serverOptions: ServerOptions = {
@@ -69,6 +73,49 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
 	let attachToPodCmd =  vscode.commands.registerCommand('kube-debug.attachToPod', async () => {
+		const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
+        if (!workspaceFolder) {
+            vscode.window.showErrorMessage('Please open a workspace first.');
+            return;
+        }
+		const configFile = path.join(workspaceFolder.uri.fsPath, '.vscode', 'kube-debug.json');
+        const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+
+		const confName = await vscode.window.showQuickPick(config.configurations.map((c: any) => c.name), {
+            placeHolder: 'Select a configuration',
+        });
+
+        if (!confName) {
+            return;
+        }
+		const conf = config.configurations.find((c: any) => c.name === confName);
+        if (!conf) {
+            vscode.window.showErrorMessage(`Configuration ${confName} not found.`);
+            return;
+        }
+		let child = child_process.spawn('kubectl', ['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2345:2345']);
+		console.log(`Spawned child pid: ${child.pid}`);
+		console.log(['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2345:2345']);
+		await sleep(1000);
+
+		let debugTaskName = `Attach to Kube Pod ${conf.namespace || "default"}/${conf.pod}`;
+		vscode.debug.startDebugging(undefined, {
+			type: 'go',
+			request: 'attach',
+			name: debugTaskName,
+			mode: "remote",
+            remotePath: workspaceFolder.uri.fsPath,
+			host: "127.0.0.1",
+			port: 2345
+		});
+
+		vscode.debug.onDidTerminateDebugSession((session) => {
+			if (session.name === debugTaskName) {
+				// 调试会话结束时，kill子进程
+				child.kill();
+				console.log(`Child process killed, exitCode: ${child.exitCode}`);
+			}
+		});
 	});
 	let runTestCmd =  vscode.commands.registerCommand('kube-debug.runTest', async () => {
 	});

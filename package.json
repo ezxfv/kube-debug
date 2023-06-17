@@ -20,6 +20,10 @@
         "title": "KubeDebug: Compile To Pod"
       },
       {
+        "command": "kube-debug.attachToPod",
+        "title": "KubeDebug: Attach To Pod"
+      },
+      {
         "command": "kube-debug.debugTest",
         "title": "KubeDebug: Debug test in Pod"
       }
