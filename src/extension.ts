@@ -128,7 +128,7 @@ export function activate(context: vscode.ExtensionContext) {
 		console.log(conf);
 		let debugBin = `_debug_bin_${symbolName}`;
 		const testFileDir = path.dirname(fsPath);
-		const relativeDir = path.relative(testFileDir, workspaceFolder.uri.fsPath);
+		const relativeDir = path.relative(workspaceFolder.uri.fsPath, testFileDir);
 		console.log(debugBin, relativeDir, path.dirname(fsPath));
 		process.chdir(testFileDir);
 
@@ -138,9 +138,10 @@ export function activate(context: vscode.ExtensionContext) {
 		const targetDir = path.dirname(targetBin);
 		const gotestFlags = (conf.testFlags || []).join(" ");
 
-        await execAsync(`kubectl cp ${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
+		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
+        await execAsync(`kubectl cp ${testFileDir}/${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
         await execAsync(`rm -rf ${debugBin}`);
-		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}`);
+		await execAsync2(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}"`, "Go Debug");
 	});
 	let debugTestCmd =  vscode.commands.registerCommand('kube-debug.debugTest', async (symbolName: string, fsPath: string) => {
 		const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
@@ -154,7 +155,7 @@ export function activate(context: vscode.ExtensionContext) {
 		console.log(conf);
 		let debugBin = `_debug_bin_${symbolName}`;
 		const testFileDir = path.dirname(fsPath);
-		const relativeDir = path.relative(testFileDir, workspaceFolder.uri.fsPath);
+		const relativeDir = path.relative(workspaceFolder.uri.fsPath, testFileDir);
 		console.log(debugBin, relativeDir, path.dirname(fsPath));
 		process.chdir(testFileDir);
 
@@ -164,9 +165,10 @@ export function activate(context: vscode.ExtensionContext) {
 		const targetDir = path.dirname(targetBin);
 		const gotestFlags = (conf.testFlags || []).join(" ");
 
+		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
         await execAsync(`kubectl cp ${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
         await execAsync(`rm -rf ${debugBin}`);
-		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- cd ${targetDir} && dlv test --headless --listen=:2346 --api-version=2 -- ${debugBin} ${gotestFlags} -test.run ${symbolName}`);
+		await execAsync2(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "cd ${targetDir} && dlv exec --headless --listen=:2346 --api-version=2 -- ${targetBin} ${gotestFlags} -test.run ${symbolName}"`, "Go Debug");
     });
 
     context.subscriptions.push(compileToPodCmd);
@@ -178,6 +180,8 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {}
 
 function execAsync(command: string) {
+	console.log(`exec: ${command}`);
+
     return new Promise<{ stdout: string, stderr: string }>((resolve, reject) => {
         child_process.exec(command, (error, stdout, stderr) => {
             if (error) {
@@ -186,6 +190,42 @@ function execAsync(command: string) {
             }
 
             resolve({ stdout, stderr });
+        });
+    });
+}
+
+function execAsync2(command: string, outputChannelName: string = 'kube-debug') {
+	console.log(`output: ${outputChannelName}, exec: ${command}`);
+
+    return new Promise<{ stdout: string, stderr: string }>((resolve, reject) => {
+        // Get or create output channel
+        let outputChannel = vscode.window.createOutputChannel(outputChannelName);
+
+        const child = child_process.exec(command);
+
+        if (child.stdout) {
+            child.stdout.on('data', (data) => {
+                outputChannel.appendLine(data.toString());
+            });
+        }
+
+        if (child.stderr) {
+            child.stderr.on('data', (data) => {
+                outputChannel.appendLine(data.toString());
+            });
+        }
+
+        child.on('error', (error) => {
+            reject(error);
+        });
+
+        child.on('exit', (code, signal) => {
+            if (code !== 0) {
+                reject(new Error(`Exited with ${code || signal}`));
+                return;
+            }
+
+            resolve({ stdout: outputChannelName, stderr: outputChannelName });
         });
     });
 }
