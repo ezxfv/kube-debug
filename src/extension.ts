@@ -2,34 +2,35 @@ import * as vscode from 'vscode';
 import * as child_process from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from 'vscode-languageclient/node';
+//import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from 'vscode-languageclient/node';
 
-let client: LanguageClient;
+//let client: LanguageClient;
 
 export function activate(context: vscode.ExtensionContext) {
 	// gopls server options
-	let serverOptions: ServerOptions = {
-		run: { command: 'gopls', transport: TransportKind.stdio },
-		debug: { command: 'gopls', transport: TransportKind.stdio }
-	};
+	// let serverOptions: ServerOptions = {
+	// 	run: { command: 'gopls', transport: TransportKind.stdio },
+	// 	debug: { command: 'gopls', transport: TransportKind.stdio }
+	// };
 
-	// Options to control the language client
-	let clientOptions: LanguageClientOptions = {
-		// Register the server for Go documents
-		documentSelector: [{ scheme: 'file', language: 'go' }],
-	};
+	// // Options to control the language client
+	// let clientOptions: LanguageClientOptions = {
+	// 	// Register the server for Go documents
+	// 	documentSelector: [{ scheme: 'file', language: 'go' }],
+	// };
 
-	// Create the language client and start the client.
-	client = new LanguageClient(
-		'kubeDebugGoLanguageServer',
-		'Go Language Server',
-		serverOptions,
-		clientOptions
-	);
+	// // Create the language client and start the client.
+	// client = new LanguageClient(
+	// 	'kubeDebugGoLanguageServer',
+	// 	'Go Language Server',
+	// 	serverOptions,
+	// 	clientOptions
+	// );
 
-	// Start the client. This will also launch the server
-	client.start();
-	let clProvider = new GoCodeLensProvider(client);
+	// // Start the client. This will also launch the server
+	// client.start();
+	// let clProvider = new GoCodeLensProvider(client);
+	let clProvider = new GoCodeLensProvider();
 	context.subscriptions.push(vscode.languages.registerCodeLensProvider(
 		{ scheme: 'file', language: 'go' },
 		clProvider,
@@ -67,6 +68,10 @@ export function activate(context: vscode.ExtensionContext) {
 		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- pkill -SIGUSR1 -f "python.*supervisor.py"`);
     });
 
+	let attachToPodCmd =  vscode.commands.registerCommand('kube-debug.attachToPod', async () => {
+	});
+	let runTestCmd =  vscode.commands.registerCommand('kube-debug.runTest', async () => {
+	});
 	let debugTestCmd =  vscode.commands.registerCommand('kube-debug.debugTest', async () => {
 		const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
         if (!workspaceFolder) {
@@ -100,6 +105,8 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     context.subscriptions.push(compileToPodCmd);
+	context.subscriptions.push(attachToPodCmd);
+	context.subscriptions.push(runTestCmd);
 	context.subscriptions.push(debugTestCmd);
 }
 
@@ -119,34 +126,52 @@ function execAsync(command: string) {
 }
 
 class GoCodeLensProvider implements vscode.CodeLensProvider {
-	client: LanguageClient;
+	// client: LanguageClient;
 
-	constructor(client: LanguageClient) {
-		this.client = client;
-	}
+	// constructor(client: LanguageClient) {
+	// 	this.client = client;
+	// }
 	async provideCodeLenses(document: vscode.TextDocument, token: vscode.CancellationToken): Promise<vscode.CodeLens[]> {
-		// Get symbols from gopls
-		const params = { textDocument: { uri: document.uri.toString() } };
-		const symbols = await client.sendRequest<any>('textDocument/documentSymbol', params);
-		
-		// Create codelens for each main function and test case
-		let codelenses: vscode.CodeLens[] = [];
-		for (let symbol of symbols) {
-			if (symbol.name === 'main' || symbol.name.startsWith('Test')) {
-				const range = new vscode.Range(
-					symbol.selectionRange.start.line,
-					symbol.selectionRange.start.character,
-					symbol.selectionRange.end.line,
-					symbol.selectionRange.end.character
-				);
-				const command: vscode.Command = {
-					command: symbol.name === 'main' ? 'kube-debug.compileToPod' : 'kube-debug.debugTest',
-					title: symbol.name === 'main' ? 'Compile to Pod' : 'Kube Debug',
-					arguments: [symbol.name, document.uri.fsPath]
-				};
-				codelenses.push(new vscode.CodeLens(range, command));
+        // Get symbols from vscode
+        const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', document.uri);
+        const flatSymbols = this.flattenSymbols(symbols || [], document.uri);
+
+        // Create codelens for each main function and test case
+        let codelenses: vscode.CodeLens[] = [];
+        for (let symbol of flatSymbols) {
+            if (symbol.name === 'main' || symbol.name.startsWith('Test')) {
+                const range = symbol.location.range;
+                const runCommand: vscode.Command = {
+                    command: symbol.name === 'main' ? 'kube-debug.compileToPod' : 'kube-debug.runTest',
+                    title: 'Kube Run',
+                    arguments: [symbol.name, document.uri.fsPath]
+                };
+				const debugCommand: vscode.Command = {
+                    command: symbol.name === 'main' ? 'kube-debug.compileToPod' : 'kube-debug.debugTest',
+                    title: 'Kube Debug',
+                    arguments: [symbol.name, document.uri.fsPath]
+                };
+                codelenses.push(new vscode.CodeLens(range, runCommand));
+				codelenses.push(new vscode.CodeLens(range, debugCommand));
+            }
+        }
+        return codelenses;
+    }
+
+    flattenSymbols(symbols: vscode.DocumentSymbol[], uri: vscode.Uri, containerName = ''): vscode.SymbolInformation[] {
+		const result: vscode.SymbolInformation[] = [];
+		for (const symbol of symbols) {
+			const symbolInformation = new vscode.SymbolInformation(
+				symbol.name, 
+				symbol.kind, 
+				containerName,
+				new vscode.Location(uri, symbol.range)
+			);
+			result.push(symbolInformation);
+			if (symbol.children.length > 0) {
+				result.push(...this.flattenSymbols(symbol.children, uri, symbol.name));
 			}
 		}
-		return codelenses;
+		return result;
 	}
 }
