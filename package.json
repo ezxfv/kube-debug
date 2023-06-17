@@ -3,8 +3,6 @@
   "displayName": "kube-debug",
   "description": "debug your bin in pod",
   "version": "0.0.1",
-  "repository": "https://github.com/ezxfv/kube-debug",
-  "yarn": true,
   "engines": {
     "vscode": "^1.79.0"
   },
@@ -32,10 +30,10 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "yarn run compile",
+    "vscode:prepublish": "pnpm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "yarn run compile && yarn run lint",
+    "pretest": "pnpm run compile && pnpm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js"
   },
