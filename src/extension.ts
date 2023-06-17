@@ -103,9 +103,29 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 		let portForwardProc = child_process.spawn('kubectl', ['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2345:2345']);
-		console.log(`Spawned child pid: ${portForwardProc.pid}`);
-		console.log(['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2345:2345']);
 		await sleep(1000);
+
+		const { stdout: containerName } = await execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
+		const logPath = path.join(path.dirname(conf.targetPath), "debug.log");
+		let command = `kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- tail -n 50 ${logPath} -f`;
+		let outputChannelName = "Kube-Debug: Tail Log";
+		let outputChannel = getOrCreateOutputChannel(outputChannelName);
+
+		let tailLogProc = child_process.spawn(command, { shell: true });
+
+		tailLogProc.stdout.on('data', (data) => {
+			outputChannel.append(data.toString());
+		});
+
+		tailLogProc.stderr.on('data', (data) => {
+			outputChannel.append(data.toString());
+		});
+
+		tailLogProc.on('exit', (code, signal) => {
+			if (code !== 0) {
+				outputChannel.append(`Exited with ${code || signal}`);
+			}
+		});
 
 		let debugTaskName = `Attach to Kube Pod ${conf.namespace || "default"}/${conf.pod}`;
 		vscode.debug.startDebugging(undefined, {
@@ -122,7 +142,9 @@ export function activate(context: vscode.ExtensionContext) {
 			if (session.name === debugTaskName) {
 				// 调试会话结束时，kill子进程
 				portForwardProc.kill();
-				console.log(`Child process killed, exitCode: ${portForwardProc.exitCode}`);
+				tailLogProc.kill();
+				console.log(`portForwardProc process killed, exitCode: ${portForwardProc.exitCode}`);
+				console.log(`tailLogProc process killed, exitCode: ${tailLogProc.exitCode}`);
 			}
 		});
 	});
