@@ -9,6 +9,16 @@ import * as path from 'path';
 function sleep(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
+// Global map to cache output channels
+const outputChannels = new Map();
+function getOrCreateOutputChannel(name: string) {
+    if (!outputChannels.has(name)) {
+        outputChannels.set(name, vscode.window.createOutputChannel(name));
+    }
+    let outputChannel = outputChannels.get(name);
+    outputChannel.show(true);
+    return outputChannel;
+}
 
 export function activate(context: vscode.ExtensionContext) {
 	// gopls server options
@@ -92,8 +102,8 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showErrorMessage(`Configuration ${confName} not found.`);
             return;
         }
-		let child = child_process.spawn('kubectl', ['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2345:2345']);
-		console.log(`Spawned child pid: ${child.pid}`);
+		let portForwardProc = child_process.spawn('kubectl', ['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2345:2345']);
+		console.log(`Spawned child pid: ${portForwardProc.pid}`);
 		console.log(['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2345:2345']);
 		await sleep(1000);
 
@@ -111,8 +121,8 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.debug.onDidTerminateDebugSession((session) => {
 			if (session.name === debugTaskName) {
 				// 调试会话结束时，kill子进程
-				child.kill();
-				console.log(`Child process killed, exitCode: ${child.exitCode}`);
+				portForwardProc.kill();
+				console.log(`Child process killed, exitCode: ${portForwardProc.exitCode}`);
 			}
 		});
 	});
@@ -132,7 +142,7 @@ export function activate(context: vscode.ExtensionContext) {
 		console.log(debugBin, relativeDir, path.dirname(fsPath));
 		process.chdir(testFileDir);
 
-		await execAsync(`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o ${debugBin}`);
+		await execAsync(`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -gcflags="all=-N -l" -o ${debugBin}`);
         const { stdout: containerName } = await execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
 		const targetBin = path.join(conf.targetDir, relativeDir, debugBin);
 		const targetDir = path.dirname(targetBin);
@@ -141,7 +151,7 @@ export function activate(context: vscode.ExtensionContext) {
 		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
         await execAsync(`kubectl cp ${testFileDir}/${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
         await execAsync(`rm -rf ${debugBin}`);
-		await execAsync2(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}"`, "Go Debug");
+		await execAsync2(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}"`, "Kube-Debug: Run Test");
 	});
 	let debugTestCmd =  vscode.commands.registerCommand('kube-debug.debugTest', async (symbolName: string, fsPath: string) => {
 		const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
@@ -149,17 +159,19 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showErrorMessage('Please open a workspace first.');
             return;
         }
-        const configFile = path.join(workspaceFolder.uri.fsPath, '.vscode', 'kube-debug.json');
+		const wsPath = workspaceFolder.uri.fsPath;
+
+        const configFile = path.join(wsPath, '.vscode', 'kube-debug.json');
         const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
 		const conf = config.testConfigurations;
 		console.log(conf);
 		let debugBin = `_debug_bin_${symbolName}`;
 		const testFileDir = path.dirname(fsPath);
-		const relativeDir = path.relative(workspaceFolder.uri.fsPath, testFileDir);
+		const relativeDir = path.relative(wsPath, testFileDir);
 		console.log(debugBin, relativeDir, path.dirname(fsPath));
 		process.chdir(testFileDir);
 
-		await execAsync(`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o ${debugBin}`);
+		await execAsync(`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -gcflags="all=-N -l" -o ${debugBin}`);
         const { stdout: containerName } = await execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
 		const targetBin = path.join(conf.targetDir, relativeDir, debugBin);
 		const targetDir = path.dirname(targetBin);
@@ -168,8 +180,54 @@ export function activate(context: vscode.ExtensionContext) {
 		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
         await execAsync(`kubectl cp ${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
         await execAsync(`rm -rf ${debugBin}`);
-		await execAsync2(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "cd ${targetDir} && dlv exec --headless --listen=:2346 --api-version=2 -- ${targetBin} ${gotestFlags} -test.run ${symbolName}"`, "Go Debug");
-    });
+		
+		let command = `kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "cd ${targetDir} && dlv exec --headless --listen=:2346 --api-version=2 -- ${targetBin} ${gotestFlags} -test.run ${symbolName}"`;
+		// Get or create output channel
+		let outputChannelName = "Kube-Debug: Debug Test";
+		let outputChannel = getOrCreateOutputChannel(outputChannelName);
+
+		// Use shell option for spawn to handle complex command with pipes and redirections
+		let dlvProc = child_process.spawn(command, { shell: true });
+
+		dlvProc.stdout.on('data', (data) => {
+			outputChannel.append(data.toString());
+		});
+
+		dlvProc.stderr.on('data', (data) => {
+			outputChannel.append(data.toString());
+		});
+
+		dlvProc.on('exit', (code, signal) => {
+			if (code !== 0) {
+				outputChannel.append(`Exited with ${code || signal}`);
+			}
+		});
+
+		let portForwardProc = child_process.spawn('kubectl', ['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2346:2346']);
+		console.log(`Spawned child pid: ${portForwardProc.pid}`);
+		await sleep(1000);
+
+		let debugTaskName = `Debug Test ${symbolName} in Kube Pod ${conf.namespace || "default"}/${conf.pod}`;
+		vscode.debug.startDebugging(undefined, {
+			type: 'go',
+			request: 'attach',
+			name: debugTaskName,
+			mode: "remote",
+            remotePath: wsPath,
+			host: "127.0.0.1",
+			port: 2346
+		});
+
+		vscode.debug.onDidTerminateDebugSession((session) => {
+			if (session.name === debugTaskName) {
+				// 调试会话结束时，kill子进程
+				portForwardProc.kill();
+				dlvProc.kill();
+				console.log(`port forward process killed, exitCode: ${portForwardProc.exitCode}`);
+				console.log(`dlv process killed, exitCode: ${dlvProc.exitCode}`);
+			}
+		});
+	});
 
     context.subscriptions.push(compileToPodCmd);
 	context.subscriptions.push(attachToPodCmd);
@@ -199,19 +257,19 @@ function execAsync2(command: string, outputChannelName: string = 'kube-debug') {
 
     return new Promise<{ stdout: string, stderr: string }>((resolve, reject) => {
         // Get or create output channel
-        let outputChannel = vscode.window.createOutputChannel(outputChannelName);
+        let outputChannel = getOrCreateOutputChannel(outputChannelName);
 
         const child = child_process.exec(command);
 
         if (child.stdout) {
             child.stdout.on('data', (data) => {
-                outputChannel.appendLine(data.toString());
+                outputChannel.append(data.toString());
             });
         }
 
         if (child.stderr) {
             child.stderr.on('data', (data) => {
-                outputChannel.appendLine(data.toString());
+                outputChannel.append(data.toString());
             });
         }
 
