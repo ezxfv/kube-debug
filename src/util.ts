@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import * as child_process from 'child_process';
 
+export function getWorkspaceDir(): string {
+    return vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : ''
+}
 
 export function sleep(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));

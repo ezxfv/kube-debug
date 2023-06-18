@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as config from './config';
 import * as codelens from './codelens';
 import * as util from "./util";
-
+import * as task from "./task";
 
 export function activate(context: vscode.ExtensionContext) {
 	let clProvider = new codelens.GoCodeLensProvider();
@@ -115,39 +115,44 @@ export function activate(context: vscode.ExtensionContext) {
 			vscode.window.showErrorMessage('Please open a workspace first.');
 			return;
 		}
+		
+
 		const conf = configs.testConfigurations;
-		let debugBin = `_debug_bin_${symbolName}`;
 		const testFileDir = path.dirname(fsPath);
 		const relativeDir = path.relative(workDir, testFileDir);
-
+		
 		const taskCfg = config.createOrGetTask(`${workDir}/.vscode/kube-debug-v2.json`, symbolName, relativeDir, "test");
 		console.log(taskCfg);
 
-		console.log(debugBin, relativeDir, path.dirname(fsPath));
-		process.chdir(testFileDir);
+		conf["testName"] = symbolName;
+		conf["pkgPath"] = relativeDir;
+		await task.runTest(conf);
+		
+		//let debugBin = `_debug_bin_${symbolName}`;
+		// console.log(debugBin, relativeDir, path.dirname(fsPath));
+		// process.chdir(testFileDir);
+		// await util.execAsync(`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -gcflags="all=-N -l" -o ${debugBin}`);
+		// const { stdout: containerName } = await util.execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
+		// const targetBin = path.join(conf.targetDir, relativeDir, debugBin);
+		// const targetDir = path.dirname(targetBin);
+		// const gotestFlags = (conf.testFlags || []).join(" ");
 
-		await util.execAsync(`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -gcflags="all=-N -l" -o ${debugBin}`);
-		const { stdout: containerName } = await util.execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
-		const targetBin = path.join(conf.targetDir, relativeDir, debugBin);
-		const targetDir = path.dirname(targetBin);
-		const gotestFlags = (conf.testFlags || []).join(" ");
+		// await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
+		// await util.execAsync(`kubectl cp ${testFileDir}/${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
+		// await util.execAsync(`rm -rf ${debugBin}`);
 
-		await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
-		await util.execAsync(`kubectl cp ${testFileDir}/${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
-		await util.execAsync(`rm -rf ${debugBin}`);
-
-		const envVars = {
-			ENV_VAR_1: 'xxx yyy'
-		};
-		let envVarString = "";
-		if (Object.keys(envVars || {}).length > 0) {
-			envVarString = "export " + Object.entries(envVars)
-				.map(([key, value]) => `${key}='${value}'`)
-				.join(' ') + " && ";
-		}
+		// const envVars = {
+		// 	ENV_VAR_1: 'xxx yyy'
+		// };
+		// let envVarString = "";
+		// if (Object.keys(envVars || {}).length > 0) {
+		// 	envVarString = "export " + Object.entries(envVars)
+		// 		.map(([key, value]) => `${key}='${value}'`)
+		// 		.join(' ') + " && ";
+		// }
 
 
-		await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${envVarString} cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}"`, {}, "Kube-Debug: Run Test");
+		// await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${envVarString} cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}"`, {}, "Kube-Debug: Run Test");
 	});
 	let debugTestCmd = vscode.commands.registerCommand('kube-debug.debugTest', async (symbolName: string, fsPath: string) => {
 		const [workDir, confPath, configs] = config.loadConfig();
