@@ -10,6 +10,12 @@ This extension provides a command that executes the following steps:
 2. Start a remote debugging session.
 3. When the debugging session ends, it kills the `kubectl` child process.
 
+## TODO
+- 使用新设计的配置结构
+- 支持指定应用环境变量和参数
+- 支持回传多个日志信息
+- 支持定义preTask
+- 支持侧面栏展示
 
 ## Requirements
 

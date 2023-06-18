@@ -85,7 +85,7 @@ function createOrGetTask(configPath: string, symbolName: string, pkgPath: string
 	const newTask = { ...taskTemplate, name: taskName, cwd: `${pkgPath}` };
 	if (templateType === 'test')
 	{
-		config.testName = symbolName;
+		newTask.testName = symbolName;
 	}
 	tasks.push(newTask);
 	if (templateType === 'build')
