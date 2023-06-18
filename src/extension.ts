@@ -6,7 +6,7 @@ import * as os from 'os';
 import * as lodash from 'lodash';
 
 
-function innerResolveVariables(value: any): any {
+function resolveVariables(config: any, value: any): any {
 	let variables = {
 		"userHome": os.homedir(),
 		"workspaceFolder": vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : '',
@@ -28,31 +28,32 @@ function innerResolveVariables(value: any): any {
 		"defaultBuildTask": '',
 	};
 
-	if (typeof value === 'string') {
-		for (let variable in variables) {
-			value = value.replace('${' + variable + '}', (variables as Record<string, string>)[variable]);
+	const resolveValue = (value: any): any => {
+		if (typeof value === 'string') {
+			for (let variable in variables) {
+				value = value.replace('${' + variable + '}', (variables as Record<string, string>)[variable]);
+			}
+		} else if (Array.isArray(value)) {
+			value = value.map(resolveValue);
+		} else if (typeof value === 'object' && value !== null) {
+			value = lodash.cloneDeep(value);
+			for (let key in value) {
+				value[key] = resolveValue(value[key]);
+			}
 		}
-	} else if (Array.isArray(value)) {
-		value = value.map(innerResolveVariables);
-	} else if (typeof value === 'object' && value !== null) {
-		value = lodash.cloneDeep(value);
-		for (let key in value) {
-			// global config只支持一级key value，不支持object
-			value[key] = innerResolveVariables(value[key]);
+
+		return value;
+	};
+
+	value = resolveValue(value);
+
+	for (const key of Object.keys(config)) {
+		if (!value[key]) {
+			value[key] = config[key];
 		}
 	}
 
 	return value;
-}
-
-function resolveVariables(config: any, value: any): any {
-	let resolvedConfig = innerResolveVariables(value);
-	for (const key of Object.keys(config)) {
-		if (!resolvedConfig[key]) {
-			resolvedConfig[key] = config[key];
-		}
-	}
-	return resolvedConfig;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -109,53 +110,54 @@ function createOrGetTask(configPath: string, symbolName: string, pkgPath: string
 	return resolvedConfig;
 }
 
-function execAsync(command: string, envVars: Record<string, string> = {}) {
+function execAsync(command: string, envVars: Record<string, string> = {}, outputChannelName?: string) {
 	console.log(`exec: ${command}`);
+	if (outputChannelName) {
+		console.log(`output: ${outputChannelName}`);
+	}
 
-	return new Promise<{ stdout: string, stderr: string }>((resolve, reject) => {
+	return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
 		const options = {
 			env: {
 				...process.env,
-				...envVars,
-			}
-		};
-		child_process.exec(command, options, (error, stdout, stderr) => {
-			if (error) {
-				reject(error);
-				return;
-			}
-
-			resolve({ stdout, stderr });
-		});
-	});
-}
-
-function execAsync2(command: string, outputChannelName: string = 'kube-debug', envVars: Record<string, string> = {}) {
-	console.log(`output: ${outputChannelName}, exec: ${command}`);
-
-	return new Promise<{ stdout: string, stderr: string }>((resolve, reject) => {
-		// Get or create output channel
-		let outputChannel = getOrCreateOutputChannel(outputChannelName);
-
-		const options = {
-			env: {
-				...process.env,
-				...envVars,
+				...envVars
 			}
 		};
 
 		const child = child_process.exec(command, options);
 
-		if (child.stdout) {
-			child.stdout.on('data', (data) => {
-				outputChannel.append(data.toString());
-			});
-		}
+		let stdout = '';
+		let stderr = '';
 
-		if (child.stderr) {
-			child.stderr.on('data', (data) => {
-				outputChannel.append(data.toString());
-			});
+		if (outputChannelName) {
+			// Get or create output channel
+			let outputChannel = getOrCreateOutputChannel(outputChannelName);
+
+			if (child.stdout) {
+				child.stdout.on('data', (data) => {
+					stdout += data.toString();
+					outputChannel.append(data.toString());
+				});
+			}
+
+			if (child.stderr) {
+				child.stderr.on('data', (data) => {
+					stderr += data.toString();
+					outputChannel.append(data.toString());
+				});
+			}
+		} else {
+			if (child.stdout) {
+				child.stdout.on('data', (data) => {
+					stdout += data.toString();
+				});
+			}
+
+			if (child.stderr) {
+				child.stderr.on('data', (data) => {
+					stderr += data.toString();
+				});
+			}
 		}
 
 		child.on('error', (error) => {
@@ -168,7 +170,7 @@ function execAsync2(command: string, outputChannelName: string = 'kube-debug', e
 				return;
 			}
 
-			resolve({ stdout: outputChannelName, stderr: outputChannelName });
+			resolve({ stdout, stderr });
 		});
 	});
 }
@@ -251,6 +253,8 @@ export function activate(context: vscode.ExtensionContext) {
 		await execAsync(`kubectl cp ${conf.binary} ${conf.namespace}/${conf.pod}:${conf.targetPath} -c ${containerName}`);
 		await execAsync(`rm -rf ${conf.binary}`);
 		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- pkill -SIGUSR1 -f "python.*supervisor.py"`);
+
+		vscode.window.showInformationMessage(`copied new binary to pod: ${conf.pod}`);
 	});
 
 	let attachToPodCmd = vscode.commands.registerCommand('kube-debug.attachToPod', async () => {
@@ -343,19 +347,19 @@ export function activate(context: vscode.ExtensionContext) {
 		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
 		await execAsync(`kubectl cp ${testFileDir}/${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
 		await execAsync(`rm -rf ${debugBin}`);
-		
+
 		const envVars = {
 			ENV_VAR_1: 'xxx yyy'
 		};
 		let envVarString = "";
-		if (Object.keys(envVars || {}).length > 0)  {
+		if (Object.keys(envVars || {}).length > 0) {
 			envVarString = "export " + Object.entries(envVars)
-			.map(([key, value]) => `${key}='${value}'`)
-			.join(' ') + " && ";
+				.map(([key, value]) => `${key}='${value}'`)
+				.join(' ') + " && ";
 		}
-		
 
-		await execAsync2(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${envVarString} cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}"`, "Kube-Debug: Run Test");
+
+		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${envVarString} cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}"`, "Kube-Debug: Run Test");
 	});
 	let debugTestCmd = vscode.commands.registerCommand('kube-debug.debugTest', async (symbolName: string, fsPath: string) => {
 		const [workDir, confPath, configs] = loadConfig();
