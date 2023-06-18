@@ -6,26 +6,54 @@ import * as os from 'os';
 import * as lodash from 'lodash';
 
 
-let variables = {
-	"userHome": os.homedir(),
-	"workspaceFolder": vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : '',
-	"workspaceFolderBasename": vscode.workspace.workspaceFolders ? path.basename(vscode.workspace.workspaceFolders[0].uri.fsPath) : '',
-	"file": vscode.window.activeTextEditor ? vscode.window.activeTextEditor.document.uri.fsPath : '',
-	"fileWorkspaceFolder": vscode.window.activeTextEditor ? vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri).uri.fsPath : '',
-	"relativeFile": vscode.window.activeTextEditor ? vscode.workspace.asRelativePath(vscode.window.activeTextEditor.document.uri.fsPath) : '',
-	"relativeFileDirname": vscode.window.activeTextEditor ? path.dirname(vscode.workspace.asRelativePath(vscode.window.activeTextEditor.document.uri.fsPath)) : '',
-	"fileBasename": vscode.window.activeTextEditor ? path.basename(vscode.window.activeTextEditor.document.uri.fsPath) : '',
-	"fileBasenameNoExtension": vscode.window.activeTextEditor ? path.basename(vscode.window.activeTextEditor.document.uri.fsPath, path.extname(vscode.window.activeTextEditor.document.uri.fsPath)) : '',
-	"fileExtname": vscode.window.activeTextEditor ? path.extname(vscode.window.activeTextEditor.document.uri.fsPath) : '',
-	"fileDirname": vscode.window.activeTextEditor ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath) : '',
-	"fileDirnameBasename": vscode.window.activeTextEditor ? path.basename(path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)) : '',
-	"cwd": process.cwd(),
-	"lineNumber": vscode.window.activeTextEditor ? vscode.window.activeTextEditor.selection.active.line + 1 : '',
-	"selectedText": vscode.window.activeTextEditor ? vscode.window.activeTextEditor.document.getText(vscode.window.activeTextEditor.selection) : '',
-	"execPath": process.execPath,
-	"pathSeparator": path.sep,
-	"defaultBuildTask": '',
-};
+function innerResolveVariables(value: any): any {
+	let variables = {
+		"userHome": os.homedir(),
+		"workspaceFolder": vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : '',
+		"workspaceFolderBasename": vscode.workspace.workspaceFolders ? path.basename(vscode.workspace.workspaceFolders[0].uri.fsPath) : '',
+		"file": vscode.window.activeTextEditor ? vscode.window.activeTextEditor.document.uri.fsPath : '',
+		"fileWorkspaceFolder": vscode.window.activeTextEditor ? vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri).uri.fsPath : '',
+		"relativeFile": vscode.window.activeTextEditor ? vscode.workspace.asRelativePath(vscode.window.activeTextEditor.document.uri.fsPath) : '',
+		"relativeFileDirname": vscode.window.activeTextEditor ? path.dirname(vscode.workspace.asRelativePath(vscode.window.activeTextEditor.document.uri.fsPath)) : '',
+		"fileBasename": vscode.window.activeTextEditor ? path.basename(vscode.window.activeTextEditor.document.uri.fsPath) : '',
+		"fileBasenameNoExtension": vscode.window.activeTextEditor ? path.basename(vscode.window.activeTextEditor.document.uri.fsPath, path.extname(vscode.window.activeTextEditor.document.uri.fsPath)) : '',
+		"fileExtname": vscode.window.activeTextEditor ? path.extname(vscode.window.activeTextEditor.document.uri.fsPath) : '',
+		"fileDirname": vscode.window.activeTextEditor ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath) : '',
+		"fileDirnameBasename": vscode.window.activeTextEditor ? path.basename(path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)) : '',
+		"cwd": process.cwd(),
+		"lineNumber": vscode.window.activeTextEditor ? vscode.window.activeTextEditor.selection.active.line + 1 : '',
+		"selectedText": vscode.window.activeTextEditor ? vscode.window.activeTextEditor.document.getText(vscode.window.activeTextEditor.selection) : '',
+		"execPath": process.execPath,
+		"pathSeparator": path.sep,
+		"defaultBuildTask": '',
+	};
+
+	if (typeof value === 'string') {
+		for (let variable in variables) {
+			value = value.replace('${' + variable + '}', (variables as Record<string, string>)[variable]);
+		}
+	} else if (Array.isArray(value)) {
+		value = value.map(innerResolveVariables);
+	} else if (typeof value === 'object' && value !== null) {
+		value = lodash.cloneDeep(value);
+		for (let key in value) {
+			// global config只支持一级key value，不支持object
+			value[key] = innerResolveVariables(value[key]);
+		}
+	}
+
+	return value;
+}
+
+function resolveVariables(config: any, value: any): any {
+	let resolvedConfig = innerResolveVariables(value);
+	for (const key of Object.keys(config)) {
+		if (!resolvedConfig[key]) {
+			resolvedConfig[key] = config[key];
+		}
+	}
+	return resolvedConfig;
+}
 
 function sleep(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
@@ -41,22 +69,6 @@ function getOrCreateOutputChannel(name: string) {
 	return outputChannel;
 }
 
-function resolveVariables(value: any): any {
-	if (typeof value === 'string') {
-		for (let variable in variables) {
-			value = value.replace('${' + variable + '}', (variables as Record<string, string>)[variable]);
-		}
-	} else if (Array.isArray(value)) {
-		value = value.map(resolveVariables);
-	} else if (typeof value === 'object' && value !== null) {
-		value = lodash.cloneDeep(value);
-		for (let key in value) {
-			value[key] = resolveVariables(value[key]);
-		}
-	}
-	return value;
-}
-
 function loadConfig(confFile: string = ".vscode/kube-debug.json"): [string, string, any] {
 	const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
 	if (!workspaceFolder) {
@@ -66,8 +78,7 @@ function loadConfig(confFile: string = ".vscode/kube-debug.json"): [string, stri
 	const configPath = `${workspaceFolder.uri.fsPath}/${confFile}`;
 	const configContent = fs.readFileSync(configPath, 'utf-8');
 	const config = JSON.parse(configContent);
-	const renderedConfig = resolveVariables(config);
-	return [renderedConfig.cwd || workspaceFolder.uri.fsPath, configPath, renderedConfig];
+	return [workspaceFolder.uri.fsPath, configPath, config];
 }
 
 function createOrGetTask(configPath: string, symbolName: string, pkgPath: string, templateType: string): any {
@@ -79,24 +90,23 @@ function createOrGetTask(configPath: string, symbolName: string, pkgPath: string
 	const taskIndex = tasks.findIndex((task) => task.name === taskName);
 	if (taskIndex > -1) {
 		const oldTask = tasks[taskIndex];
-		return oldTask;
+		return resolveVariables(config.global, oldTask);
 	}
 
-	const newTask = { ...taskTemplate, name: taskName, cwd: `${pkgPath}` };
-	if (templateType === 'test')
-	{
+	let newTask = { ...taskTemplate, name: taskName };
+	if (templateType === 'test') {
 		newTask.testName = symbolName;
 	}
 	tasks.push(newTask);
-	if (templateType === 'build')
-	{
+	if (templateType === 'build') {
 		config.buildTasks = tasks;
 	} else {
 		config.testTasks = tasks;
 	}
 	fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
 
-	return newTask;
+	const resolvedConfig = resolveVariables(config.global, newTask);
+	return resolvedConfig;
 }
 
 function execAsync(command: string) {
@@ -165,7 +175,7 @@ class GoCodeLensProvider implements vscode.CodeLensProvider {
 					arguments: [symbol.name, document.uri.fsPath]
 				};
 				const debugCommand: vscode.Command = {
-					command: symbol.name === 'main' ? 'kube-debug.compileToPod' : 'kube-debug.debugTest',
+					command: symbol.name === 'main' ? 'kube-debug.attachToPod' : 'kube-debug.debugTest',
 					title: 'Kube Debug',
 					arguments: [symbol.name, document.uri.fsPath]
 				};
@@ -364,7 +374,6 @@ export function activate(context: vscode.ExtensionContext) {
 		});
 
 		let portForwardProc = child_process.spawn('kubectl', ['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2346:2346']);
-		console.log(`Spawned child pid: ${portForwardProc.pid}`);
 		await sleep(1000);
 
 		let debugTaskName = `Debug Test ${symbolName} in Kube Pod ${conf.namespace || "default"}/${conf.pod}`;
