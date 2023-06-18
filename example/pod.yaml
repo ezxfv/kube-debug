@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp-1
+  namespace: default
+  labels:
+    app: my-app
+spec:
+  containers:
+  - name: main
+    image: my-app:v1.3
+    command: ["python", "/app/supervisor.py"]
+    ports:
+    - name: dlv
+      containerPort: 2345
+    - name: web
+      containerPort: 9000
+    env:
+    - name: debug-env
+      value: "kube-debug"
+    - name: cluster-id
+      value: cls-17wv8xue

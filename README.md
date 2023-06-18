@@ -1,33 +1,158 @@
 # kube-debug README
 
-"Kube-debug" is a VS Code extension that simplifies the process of debugging applications running in Kubernetes. It provides the `attachToPodCmd` command, which executes `kubectl port-forward` to map the port of a specified Kubernetes pod to a local port, and then starts a remote debugging session.
+"Kube-Debug" 是一个用于快速在k8s pod中进行调试的插件。
 
-## Features
+## 特性
+-  支持在指定pod中运行二进制或者单元测试，在所有main函数和Test函数提供Kube Run和Kube Debug按钮
+- 从命令面板搜索已经创建的任务，配置操作逻辑和goland里的任务定义类似，
+只需要在`.vscode/kube-debug.json`中定义好build和test的模版，以及global配置，每次点击新的main、Test时会自动创建任务。
+- 支持指定监听多个日志文件，在debug的时候同时把对应日志的更新内容回传到vscode的Output栏中，每个日志对应一个buffer
 
-This extension provides a command that executes the following steps:
+具体配置参考example目录下的[.vscode/kube-debug.json](./example/.vscode/kube-debug.json)。
 
-1. Use `kubectl port-forward` to map the port of a specified Kubernetes pod to a local port.
-2. Start a remote debugging session.
-3. When the debugging session ends, it kills the `kubectl` child process.
+main函数按钮
+![main按钮](./image/main.png)
+
+Test按钮
+![test按钮](./image/test.png)
+
+## 使用方式
+- 安装已打包的vsix插件: 插件侧面栏 -> 点击右上角 ... -> Install from vsix
+- demo: f5打开调试窗口后打开example目录
 
 ## TODO
-- 使用新设计的配置结构
-- 支持指定应用环境变量和参数
-- 支持回传多个日志信息
+- 支持指定应用参数
 - 支持定义preTask
 - 支持侧面栏展示
-- 任务完成时发送通知
 
-## Requirements
+## 依赖
+- 只支持mac 、linux
+- kubectl
+- kubeconfig
 
-You need to have `kubectl` installed and configured to use this extension.
+## 贡献代码
+- 配置开发环境: https://code.visualstudio.com/api/get-started/your-first-extension
 
-## Extension Settings
+## 配置样例
+在项目目录创建`.vscode/kube-debug.json`, buildTasks和testTasks会在点击按钮后自动生成，之后再进行自定义配置。global中的key会在task配置对应的key为空时进行覆盖。
 
-This extension contributes the following settings:
-
-* `kube-debug.namespace`: Specify the Kubernetes namespace. Default is "default".
-* `kube-debug.pod`: Specify the name of the Kubernetes pod.
+```json
+{
+  "version": "v0.0.1",
+  "global": {
+    "kubeConfig": "${userHome}/.kube/config",
+    "namespace": "default",
+    "pod": "myapp-1",
+    "container": "main",
+    "targetDir": "/app/",
+    "goEnv": {
+      "CGO_ENABLED": "0",
+      "GOOS": "linux",
+      "GOARCH": "${arch}"
+    }
+  },
+  "buildTemplate": {
+    "name": "Build",
+    "command": "go build",
+    "env": {
+      "ENV_VAR_1": "value1",
+      "ENV_VAR_2": "value2"
+    },
+    "toolArgs": [
+      "-gcflags=all=\"-N -l\""
+    ],
+    "args": [],
+    "pkgDir": "${relativeFileDirname}",
+    "cwd": "${workspaceFolder}",
+    "outputChannel": "Build Output",
+    "logs": [
+      "app.log"
+    ],
+    "namespace": "",
+    "pod": "",
+    "container": "",
+    "targetDir": "",
+    "binary": "debug.main"
+  },
+  "testTemplate": {
+    "name": "Test",
+    "command": "go test -c",
+    "env": {
+      "ENV_VAR_1": "value1",
+      "ENV_VAR_2": "value2"
+    },
+    "toolArgs": [
+      "-gcflags=all=\"-N -l\""
+    ],
+    "args": [
+      "-test.v"
+    ],
+    "testName": "",
+    "pkgDir": "${relativeFileDirname}",
+    "cwd": "${relativeFileDirname}",
+    "outputChannel": "Test Output",
+    "logs": [],
+    "namespace": "",
+    "pod": "",
+    "container": "",
+    "targetDir": "",
+    "binary": "debug.test"
+  },
+  "buildTasks": [
+    {
+      "name": "Build ",
+      "command": "go build",
+      "env": {
+        "ENV_VAR_1": "value1",
+        "ENV_VAR_2": "value2"
+      },
+      "toolArgs": [
+        "-gcflags=all=\"-N -l\""
+      ],
+      "args": [],
+      "pkgDir": "${relativeFileDirname}",
+      "cwd": "${workspaceFolder}",
+      "outputChannel": "Build Output",
+      "logs": [
+        "main-1.log",
+        "main-2.log",
+        "main-3.log"
+      ],
+      "namespace": "",
+      "pod": "",
+      "container": "",
+      "targetDir": "",
+      "binary": "myapp"
+    }
+  ],
+  "testTasks": [
+    {
+      "name": "Test pkg/demo.TestYYY",
+      "command": "go test -c",
+      "env": {
+        "ENV_VAR_1": "value1",
+        "ENV_VAR_2": "value2"
+      },
+      "toolArgs": [
+        "-gcflags=all=\"-N -l\""
+      ],
+      "args": [
+        "-test.v"
+      ],
+      "testName": "TestYYY",
+      "pkgDir": "${relativeFileDirname}",
+      "cwd": "${relativeFileDirname}",
+      "outputChannel": "Test Output",
+      "logs": [],
+      "namespace": "",
+      "pod": "",
+      "container": "",
+      "targetDir": "/app/pkg/demo",
+      "binary": "debug.test"
+    }
+  ]
+}
+```
 
 ## Known Issues
 
@@ -39,10 +164,93 @@ Please report any issues you find on the GitHub issue tracker.
 
 Initial release of kube-debug.
 
----
+# Kube Debug
 
-## For more information
+## Getting started
 
-* [Visual Studio Code's Extension Development Documentation](https://code.visualstudio.com/api)
+To make it easy for you to get started with GitLab, here's a list of recommended next steps.
 
-**Enjoy!**
+Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+
+## Add your files
+
+- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
+- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+
+```
+cd existing_repo
+git remote add origin https://gitlab.futunn.com/edenzhong/kube-debug.git
+git branch -M main
+git push -uf origin main
+```
+
+## Integrate with your tools
+
+- [ ] [Set up project integrations](https://gitlab.futunn.com/edenzhong/kube-debug/-/settings/integrations)
+
+## Collaborate with your team
+
+- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
+- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
+- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
+- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
+- [ ] [Automatically merge when pipeline succeeds](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+
+## Test and Deploy
+
+Use the built-in continuous integration in GitLab.
+
+- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
+- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing(SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
+- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
+- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
+- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+
+***
+
+# Editing this README
+
+When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!).  Thank you to [makeareadme.com](https://www.makeareadme.com/) for this template.
+
+## Suggestions for a good README
+Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+
+## Name
+Choose a self-explaining name for your project.
+
+## Description
+Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+
+## Badges
+On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+
+## Visuals
+Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+
+## Installation
+Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+
+## Usage
+Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+
+## Support
+Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+
+## Roadmap
+If you have ideas for releases in the future, it is a good idea to list them in the README.
+
+## Contributing
+State if you are open to contributions and what your requirements are for accepting them.
+
+For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+
+You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+
+## Authors and acknowledgment
+Show your appreciation to those who have contributed to the project.
+
+## License
+For open source projects, say how it is licensed.
+
+## Project status
+If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.

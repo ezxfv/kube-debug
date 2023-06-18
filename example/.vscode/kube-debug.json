@@ -1,0 +1,143 @@
+{
+  "version": "v0.0.1",
+  "global": {
+    "kubeConfig": "${userHome}/.kube/config",
+    "namespace": "default",
+    "pod": "myapp-1",
+    "container": "main",
+    "targetDir": "/app/",
+    "goEnv": {
+      "CGO_ENABLED": "0",
+      "GOOS": "linux",
+      "GOARCH": "${arch}"
+    }
+  },
+  "buildTemplate": {
+    "name": "Build",
+    "command": "go build",
+    "env": {
+      "ENV_VAR_1": "value1",
+      "ENV_VAR_2": "value2"
+    },
+    "toolArgs": [
+      "-gcflags=all=\"-N -l\""
+    ],
+    "args": [],
+    "pkgDir": "${relativeFileDirname}",
+    "cwd": "${workspaceFolder}",
+    "outputChannel": "Build Output",
+    "logs": [
+      "app.log"
+    ],
+    "namespace": "",
+    "pod": "",
+    "container": "",
+    "targetDir": "",
+    "binary": "debug.main"
+  },
+  "testTemplate": {
+    "name": "Test",
+    "command": "go test -c",
+    "env": {
+      "ENV_VAR_1": "value1",
+      "ENV_VAR_2": "value2"
+    },
+    "toolArgs": [
+      "-gcflags=all=\"-N -l\""
+    ],
+    "args": [
+      "-test.v"
+    ],
+    "testName": "",
+    "pkgDir": "${relativeFileDirname}",
+    "cwd": "${relativeFileDirname}",
+    "outputChannel": "Test Output",
+    "logs": [],
+    "namespace": "",
+    "pod": "",
+    "container": "",
+    "targetDir": "",
+    "binary": "debug.test"
+  },
+  "buildTasks": [
+    {
+      "name": "Build ",
+      "command": "go build",
+      "env": {
+        "ENV_VAR_1": "value1",
+        "ENV_VAR_2": "value2"
+      },
+      "toolArgs": [
+        "-gcflags=all=\"-N -l\""
+      ],
+      "args": [],
+      "pkgDir": "${relativeFileDirname}",
+      "cwd": "${workspaceFolder}",
+      "outputChannel": "Build Output",
+      "logs": [
+        "main-1.log",
+        "main-2.log",
+        "main-3.log"
+      ],
+      "namespace": "",
+      "pod": "",
+      "container": "",
+      "targetDir": "",
+      "binary": "myapp"
+    }
+  ],
+  "testTasks": [
+    {
+      "name": "Test pkg/demo.TestYYY",
+      "command": "go test -c",
+      "env": {
+        "ENV_VAR_1": "value1",
+        "ENV_VAR_2": "value2"
+      },
+      "toolArgs": [
+        "-gcflags=all=\"-N -l\""
+      ],
+      "args": [
+        "-test.v"
+      ],
+      "testName": "TestYYY",
+      "pkgDir": "${relativeFileDirname}",
+      "cwd": "${relativeFileDirname}",
+      "outputChannel": "Test Output",
+      "logs": [],
+      "namespace": "",
+      "pod": "",
+      "container": "",
+      "targetDir": "/app/pkg/demo",
+      "binary": "debug.test"
+    },
+    {
+      "name": "Test pkg/demo.TestMultiLog",
+      "command": "go test -c",
+      "env": {
+        "ENV_VAR_1": "value1",
+        "ENV_VAR_2": "value2"
+      },
+      "toolArgs": [
+        "-gcflags=all=\"-N -l\""
+      ],
+      "args": [
+        "-test.v"
+      ],
+      "testName": "TestMultiLog",
+      "pkgDir": "${relativeFileDirname}",
+      "cwd": "${relativeFileDirname}",
+      "outputChannel": "Test Output",
+      "logs": [
+        "test-1.log",
+        "test-2.log",
+        "test-3.log"
+      ],
+      "namespace": "",
+      "pod": "",
+      "container": "",
+      "targetDir": "/app/pkg/demo",
+      "binary": "debug.test"
+    }
+  ]
+}

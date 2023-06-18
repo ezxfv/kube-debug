@@ -1,432 +1,172 @@
 import * as vscode from 'vscode';
-import * as child_process from 'child_process';
-import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
-import * as lodash from 'lodash';
 
-
-function innerResolveVariables(value: any): any {
-	let variables = {
-		"userHome": os.homedir(),
-		"workspaceFolder": vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : '',
-		"workspaceFolderBasename": vscode.workspace.workspaceFolders ? path.basename(vscode.workspace.workspaceFolders[0].uri.fsPath) : '',
-		"file": vscode.window.activeTextEditor ? vscode.window.activeTextEditor.document.uri.fsPath : '',
-		"fileWorkspaceFolder": vscode.window.activeTextEditor ? vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri).uri.fsPath : '',
-		"relativeFile": vscode.window.activeTextEditor ? vscode.workspace.asRelativePath(vscode.window.activeTextEditor.document.uri.fsPath) : '',
-		"relativeFileDirname": vscode.window.activeTextEditor ? path.dirname(vscode.workspace.asRelativePath(vscode.window.activeTextEditor.document.uri.fsPath)) : '',
-		"fileBasename": vscode.window.activeTextEditor ? path.basename(vscode.window.activeTextEditor.document.uri.fsPath) : '',
-		"fileBasenameNoExtension": vscode.window.activeTextEditor ? path.basename(vscode.window.activeTextEditor.document.uri.fsPath, path.extname(vscode.window.activeTextEditor.document.uri.fsPath)) : '',
-		"fileExtname": vscode.window.activeTextEditor ? path.extname(vscode.window.activeTextEditor.document.uri.fsPath) : '',
-		"fileDirname": vscode.window.activeTextEditor ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath) : '',
-		"fileDirnameBasename": vscode.window.activeTextEditor ? path.basename(path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)) : '',
-		"cwd": process.cwd(),
-		"lineNumber": vscode.window.activeTextEditor ? vscode.window.activeTextEditor.selection.active.line + 1 : '',
-		"selectedText": vscode.window.activeTextEditor ? vscode.window.activeTextEditor.document.getText(vscode.window.activeTextEditor.selection) : '',
-		"execPath": process.execPath,
-		"pathSeparator": path.sep,
-		"defaultBuildTask": '',
-	};
-
-	if (typeof value === 'string') {
-		for (let variable in variables) {
-			value = value.replace('${' + variable + '}', (variables as Record<string, string>)[variable]);
-		}
-	} else if (Array.isArray(value)) {
-		value = value.map(innerResolveVariables);
-	} else if (typeof value === 'object' && value !== null) {
-		value = lodash.cloneDeep(value);
-		for (let key in value) {
-			// global config只支持一级key value，不支持object
-			value[key] = innerResolveVariables(value[key]);
-		}
-	}
-
-	return value;
-}
-
-function resolveVariables(config: any, value: any): any {
-	let resolvedConfig = innerResolveVariables(value);
-	for (const key of Object.keys(config)) {
-		if (!resolvedConfig[key]) {
-			resolvedConfig[key] = config[key];
-		}
-	}
-	return resolvedConfig;
-}
-
-function sleep(ms: number): Promise<void> {
-	return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-const outputChannels = new Map();
-function getOrCreateOutputChannel(name: string) {
-	if (!outputChannels.has(name)) {
-		outputChannels.set(name, vscode.window.createOutputChannel(name));
-	}
-	let outputChannel = outputChannels.get(name);
-	outputChannel.show(true);
-	return outputChannel;
-}
-
-function loadConfig(confFile: string = ".vscode/kube-debug.json"): [string, string, any] {
-	const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
-	if (!workspaceFolder) {
-		vscode.window.showErrorMessage('Please open a workspace first.');
-		return ['', '', null];
-	}
-	const configPath = `${workspaceFolder.uri.fsPath}/${confFile}`;
-	const configContent = fs.readFileSync(configPath, 'utf-8');
-	const config = JSON.parse(configContent);
-	return [workspaceFolder.uri.fsPath, configPath, config];
-}
-
-function createOrGetTask(configPath: string, symbolName: string, pkgPath: string, templateType: string): any {
-	const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-	const tasks = (templateType === 'build' ? config.buildTasks : config.testTasks) || [];
-	const taskTemplate = templateType === 'build' ? config.buildTemplate : config.testTemplate;
-	const taskName = templateType === 'build' ? `${taskTemplate.name} ${pkgPath}` : `${taskTemplate.name} ${pkgPath}.${symbolName}`;
-
-	const taskIndex = tasks.findIndex((task) => task.name === taskName);
-	if (taskIndex > -1) {
-		const oldTask = tasks[taskIndex];
-		return resolveVariables(config.global, oldTask);
-	}
-
-	let newTask = { ...taskTemplate, name: taskName };
-	if (templateType === 'test') {
-		newTask.testName = symbolName;
-	}
-	tasks.push(newTask);
-	if (templateType === 'build') {
-		config.buildTasks = tasks;
-	} else {
-		config.testTasks = tasks;
-	}
-	fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
-
-	const resolvedConfig = resolveVariables(config.global, newTask);
-	return resolvedConfig;
-}
-
-function execAsync(command: string, envVars: Record<string, string> = {}) {
-	console.log(`exec: ${command}`);
-
-	return new Promise<{ stdout: string, stderr: string }>((resolve, reject) => {
-		const options = {
-			env: {
-				...process.env,
-				...envVars,
-			}
-		};
-		child_process.exec(command, options, (error, stdout, stderr) => {
-			if (error) {
-				reject(error);
-				return;
-			}
-
-			resolve({ stdout, stderr });
-		});
-	});
-}
-
-function execAsync2(command: string, outputChannelName: string = 'kube-debug', envVars: Record<string, string> = {}) {
-	console.log(`output: ${outputChannelName}, exec: ${command}`);
-
-	return new Promise<{ stdout: string, stderr: string }>((resolve, reject) => {
-		// Get or create output channel
-		let outputChannel = getOrCreateOutputChannel(outputChannelName);
-
-		const options = {
-			env: {
-				...process.env,
-				...envVars,
-			}
-		};
-
-		const child = child_process.exec(command, options);
-
-		if (child.stdout) {
-			child.stdout.on('data', (data) => {
-				outputChannel.append(data.toString());
-			});
-		}
-
-		if (child.stderr) {
-			child.stderr.on('data', (data) => {
-				outputChannel.append(data.toString());
-			});
-		}
-
-		child.on('error', (error) => {
-			reject(error);
-		});
-
-		child.on('exit', (code, signal) => {
-			if (code !== 0) {
-				reject(new Error(`Exited with ${code || signal}`));
-				return;
-			}
-
-			resolve({ stdout: outputChannelName, stderr: outputChannelName });
-		});
-	});
-}
-
-class GoCodeLensProvider implements vscode.CodeLensProvider {
-	async provideCodeLenses(document: vscode.TextDocument, token: vscode.CancellationToken): Promise<vscode.CodeLens[]> {
-		const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', document.uri);
-		const flatSymbols = this.flattenSymbols(symbols || [], document.uri);
-
-		let codelenses: vscode.CodeLens[] = [];
-		for (let symbol of flatSymbols) {
-			if (symbol.name === 'main' || symbol.name.startsWith('Test')) {
-				const range = symbol.location.range;
-				const runCommand: vscode.Command = {
-					command: symbol.name === 'main' ? 'kube-debug.compileToPod' : 'kube-debug.runTest',
-					title: 'Kube Run',
-					arguments: [symbol.name, document.uri.fsPath]
-				};
-				const debugCommand: vscode.Command = {
-					command: symbol.name === 'main' ? 'kube-debug.attachToPod' : 'kube-debug.debugTest',
-					title: 'Kube Debug',
-					arguments: [symbol.name, document.uri.fsPath]
-				};
-				codelenses.push(new vscode.CodeLens(range, runCommand));
-				codelenses.push(new vscode.CodeLens(range, debugCommand));
-			}
-		}
-		return codelenses;
-	}
-
-	flattenSymbols(symbols: vscode.DocumentSymbol[], uri: vscode.Uri, containerName = ''): vscode.SymbolInformation[] {
-		const result: vscode.SymbolInformation[] = [];
-		for (const symbol of symbols) {
-			const symbolInformation = new vscode.SymbolInformation(
-				symbol.name,
-				symbol.kind,
-				containerName,
-				new vscode.Location(uri, symbol.range)
-			);
-			result.push(symbolInformation);
-			if (symbol.children.length > 0) {
-				result.push(...this.flattenSymbols(symbol.children, uri, symbol.name));
-			}
-		}
-		return result;
-	}
-}
+import * as config from './config';
+import * as codelens from './codelens';
+import * as task from "./task";
 
 export function activate(context: vscode.ExtensionContext) {
-	let clProvider = new GoCodeLensProvider();
+	let clProvider = new codelens.GoCodeLensProvider();
 	context.subscriptions.push(vscode.languages.registerCodeLensProvider(
 		{ scheme: 'file', language: 'go' },
 		clProvider,
 	));
 
-	let compileToPodCmd = vscode.commands.registerCommand('kube-debug.compileToPod', async () => {
-		const [workDir, confPath, configs] = loadConfig();
+	let paletteRunMain = vscode.commands.registerCommand('kube-debug.paletteRunMain', async () => {
+		const [workDir, confPath, configs] = config.loadConfig();
 		if (!workDir) {
 			vscode.window.showErrorMessage('Please open a workspace first.');
 			return;
 		}
 
-		const confName = await vscode.window.showQuickPick(configs.configurations.map((c: any) => c.name), {
+		const confName = await vscode.window.showQuickPick(configs.buildTasks.map((c: any) => c.name), {
 			placeHolder: 'Select a configuration',
 		});
 
 		if (!confName) {
 			return;
 		}
-		const conf = configs.configurations.find((c: any) => c.name === confName);
-		if (!conf) {
+		const taskCfg = configs.buildTasks.find((c: any) => c.name === confName);
+		if (!taskCfg) {
 			vscode.window.showErrorMessage(`Configuration ${confName} not found.`);
 			return;
 		}
-
-		process.chdir(workDir);
-
-		await execAsync(`${conf.buildCommand}`);
-		const { stdout: containerName } = await execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
-		await execAsync(`kubectl cp ${conf.binary} ${conf.namespace}/${conf.pod}:${conf.targetPath} -c ${containerName}`);
-		await execAsync(`rm -rf ${conf.binary}`);
-		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- pkill -SIGUSR1 -f "python.*supervisor.py"`);
+		
+		await task.runMain(config.resolveVariables(configs.global, taskCfg), workDir);
 	});
 
-	let attachToPodCmd = vscode.commands.registerCommand('kube-debug.attachToPod', async () => {
-		const [workDir, confPath, configs] = loadConfig();
+	let paletteDebugMain = vscode.commands.registerCommand('kube-debug.paletteDebugMain', async () => {
+		const [workDir, confPath, configs] = config.loadConfig();
 		if (!workDir) {
 			vscode.window.showErrorMessage('Please open a workspace first.');
 			return;
 		}
-		const confName = await vscode.window.showQuickPick(configs.configurations.map((c: any) => c.name), {
+		const confName = await vscode.window.showQuickPick(configs.buildTasks.map((c: any) => c.name), {
 			placeHolder: 'Select a configuration',
 		});
 
 		if (!confName) {
 			return;
 		}
-		const conf = configs.configurations.find((c: any) => c.name === confName);
-		if (!conf) {
+		const taskCfg = configs.buildTasks.find((c: any) => c.name === confName);
+		if (!taskCfg) {
 			vscode.window.showErrorMessage(`Configuration ${confName} not found.`);
 			return;
 		}
-		let portForwardProc = child_process.spawn('kubectl', ['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2345:2345']);
-		await sleep(1000);
-
-		const { stdout: containerName } = await execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
-		const logPath = path.join(path.dirname(conf.targetPath), "debug.log");
-		let command = `kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- tail -n 50 ${logPath} -f`;
-		let outputChannelName = "Kube-Debug: Tail Log";
-		let outputChannel = getOrCreateOutputChannel(outputChannelName);
-
-		let tailLogProc = child_process.spawn(command, { shell: true });
-
-		tailLogProc.stdout.on('data', (data) => {
-			outputChannel.append(data.toString());
-		});
-
-		tailLogProc.stderr.on('data', (data) => {
-			outputChannel.append(data.toString());
-		});
-
-		tailLogProc.on('exit', (code, signal) => {
-			if (code !== 0) {
-				outputChannel.append(`Exited with ${code || signal}`);
-			}
-		});
-
-		let debugTaskName = `Attach to Kube Pod ${conf.namespace || "default"}/${conf.pod}`;
-		vscode.debug.startDebugging(undefined, {
-			type: 'go',
-			request: 'attach',
-			name: debugTaskName,
-			mode: "remote",
-			remotePath: workDir,
-			host: "127.0.0.1",
-			port: 2345
-		});
-
-		vscode.debug.onDidTerminateDebugSession((session) => {
-			if (session.name === debugTaskName) {
-				// 调试会话结束时，kill子进程
-				portForwardProc.kill();
-				tailLogProc.kill();
-				console.log(`portForwardProc process killed, exitCode: ${portForwardProc.exitCode}`);
-				console.log(`tailLogProc process killed, exitCode: ${tailLogProc.exitCode}`);
-			}
-		});
+		await task.debugMain(config.resolveVariables(configs.global, taskCfg), workDir);
 	});
-	let runTestCmd = vscode.commands.registerCommand('kube-debug.runTest', async (symbolName: string, fsPath: string) => {
-		const [workDir, confPath, configs] = loadConfig();
+
+	let clickRunMain = vscode.commands.registerCommand('kube-debug.clickRunMain', async (symbolName: string, fsPath: string) => {
+		const [workDir, confPath, configs] = config.loadConfig();
 		if (!workDir) {
 			vscode.window.showErrorMessage('Please open a workspace first.');
 			return;
 		}
-		const conf = configs.testConfigurations;
-		let debugBin = `_debug_bin_${symbolName}`;
-		const testFileDir = path.dirname(fsPath);
-		const relativeDir = path.relative(workDir, testFileDir);
 
-		const taskCfg = createOrGetTask(`${workDir}/.vscode/kube-debug-v2.json`, symbolName, relativeDir, "test");
+		const relativeDir = path.relative(workDir, path.dirname(fsPath));
+		const taskCfg = config.createOrGetTask(symbolName, relativeDir, "build");
 		console.log(taskCfg);
 
-		console.log(debugBin, relativeDir, path.dirname(fsPath));
-		process.chdir(testFileDir);
+		await task.runMain(config.resolveVariables(configs.global, taskCfg), workDir);
+	});
 
-		await execAsync(`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -gcflags="all=-N -l" -o ${debugBin}`);
-		const { stdout: containerName } = await execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
-		const targetBin = path.join(conf.targetDir, relativeDir, debugBin);
-		const targetDir = path.dirname(targetBin);
-		const gotestFlags = (conf.testFlags || []).join(" ");
-
-		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
-		await execAsync(`kubectl cp ${testFileDir}/${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
-		await execAsync(`rm -rf ${debugBin}`);
-		
-		const envVars = {
-			ENV_VAR_1: 'xxx yyy'
-		};
-		let envVarString = "";
-		if (Object.keys(envVars || {}).length > 0)  {
-			envVarString = "export " + Object.entries(envVars)
-			.map(([key, value]) => `${key}='${value}'`)
-			.join(' ') + " && ";
+	let clickDebugMain = vscode.commands.registerCommand('kube-debug.clickDebugMain', async (symbolName: string, fsPath: string) => {
+		const [workDir, confPath, configs] = config.loadConfig();
+		if (!workDir) {
+			vscode.window.showErrorMessage('Please open a workspace first.');
+			return;
 		}
 		
+		const relativeDir = path.relative(workDir, path.dirname(fsPath));
+		const taskCfg = config.createOrGetTask(symbolName, relativeDir, "build");
+		console.log(taskCfg);
 
-		await execAsync2(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${envVarString} cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}"`, "Kube-Debug: Run Test");
+		await task.debugMain(config.resolveVariables(configs.global, taskCfg), workDir);
 	});
-	let debugTestCmd = vscode.commands.registerCommand('kube-debug.debugTest', async (symbolName: string, fsPath: string) => {
-		const [workDir, confPath, configs] = loadConfig();
+
+	let paletteRunTest = vscode.commands.registerCommand('kube-debug.paletteRunTest', async () => {
+		const [workDir, confPath, configs] = config.loadConfig();
 		if (!workDir) {
 			vscode.window.showErrorMessage('Please open a workspace first.');
 			return;
 		}
 
-		const conf = configs.testConfigurations;
-		let debugBin = `_debug_bin_${symbolName}`;
-		const testFileDir = path.dirname(fsPath);
-		const relativeDir = path.relative(workDir, testFileDir);
-		console.log(debugBin, relativeDir, path.dirname(fsPath));
-		process.chdir(testFileDir);
-
-		await execAsync(`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -gcflags="all=-N -l" -o ${debugBin}`);
-		const { stdout: containerName } = await execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
-		const targetBin = path.join(conf.targetDir, relativeDir, debugBin);
-		const targetDir = path.dirname(targetBin);
-		const gotestFlags = (conf.testFlags || []).join(" ");
-
-		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
-		await execAsync(`kubectl cp ${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
-		await execAsync(`rm -rf ${debugBin}`);
-
-		let command = `kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "cd ${targetDir} && dlv exec --headless --listen=:2346 --api-version=2 -- ${targetBin} ${gotestFlags} -test.run ${symbolName}"`;
-		let outputChannelName = "Kube-Debug: Debug Test";
-		let outputChannel = getOrCreateOutputChannel(outputChannelName);
-
-		let dlvProc = child_process.spawn(command, { shell: true });
-		dlvProc.stdout.on('data', (data) => {
-			outputChannel.append(data.toString());
-		});
-		dlvProc.stderr.on('data', (data) => {
-			outputChannel.append(data.toString());
-		});
-		dlvProc.on('exit', (code, signal) => {
-			if (code !== 0) {
-				outputChannel.append(`Exited with ${code || signal}`);
-			}
+		const confName = await vscode.window.showQuickPick(configs.testTasks.map((c: any) => c.name), {
+			placeHolder: 'Select a configuration',
 		});
 
-		let portForwardProc = child_process.spawn('kubectl', ['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2346:2346']);
-		await sleep(1000);
-
-		let debugTaskName = `Debug Test ${symbolName} in Kube Pod ${conf.namespace || "default"}/${conf.pod}`;
-		vscode.debug.startDebugging(undefined, {
-			type: 'go',
-			request: 'attach',
-			name: debugTaskName,
-			mode: "remote",
-			remotePath: workDir,
-			host: "127.0.0.1",
-			port: 2346
-		});
-
-		vscode.debug.onDidTerminateDebugSession((session) => {
-			if (session.name === debugTaskName) {
-				// 调试会话结束时，kill子进程
-				portForwardProc.kill();
-				dlvProc.kill();
-				console.log(`port forward process killed, exitCode: ${portForwardProc.exitCode}`);
-				console.log(`dlv process killed, exitCode: ${dlvProc.exitCode}`);
-			}
-		});
+		if (!confName) {
+			return;
+		}
+		const taskCfg = configs.testTasks.find((c: any) => c.name === confName);
+		if (!taskCfg) {
+			vscode.window.showErrorMessage(`Configuration ${confName} not found.`);
+			return;
+		}
+		await task.runTest(config.resolveVariables(configs.global, taskCfg), workDir);
 	});
 
-	context.subscriptions.push(compileToPodCmd);
-	context.subscriptions.push(attachToPodCmd);
-	context.subscriptions.push(runTestCmd);
-	context.subscriptions.push(debugTestCmd);
+	let paletteDebugTest = vscode.commands.registerCommand('kube-debug.paletteDebugTest', async () => {
+		const [workDir, confPath, configs] = config.loadConfig();
+		if (!workDir) {
+			vscode.window.showErrorMessage('Please open a workspace first.');
+			return;
+		}
+		const confName = await vscode.window.showQuickPick(configs.testTasks.map((c: any) => c.name), {
+			placeHolder: 'Select a configuration',
+		});
+
+		if (!confName) {
+			return;
+		}
+		const taskCfg = configs.testTasks.find((c: any) => c.name === confName);
+		if (!taskCfg) {
+			vscode.window.showErrorMessage(`Configuration ${confName} not found.`);
+			return;
+		}
+		await task.debugTest(config.resolveVariables(configs.global, taskCfg), workDir);
+	});
+
+	let clickRunTest = vscode.commands.registerCommand('kube-debug.clickRunTest', async (symbolName: string, fsPath: string) => {
+		const [workDir, confPath, configs] = config.loadConfig();
+		if (!workDir) {
+			vscode.window.showErrorMessage('Please open a workspace first.');
+			return;
+		}
+		
+		const relativeDir = path.relative(workDir, path.dirname(fsPath));
+		const taskCfg = config.createOrGetTask(symbolName, relativeDir, "test");
+		console.log(taskCfg);
+
+		await task.runTest(config.resolveVariables(configs.global, taskCfg), workDir);
+	});
+
+	let clickDebugTest = vscode.commands.registerCommand('kube-debug.clickDebugTest', async (symbolName: string, fsPath: string) => {
+		const [workDir, confPath, configs] = config.loadConfig();
+		if (!workDir) {
+			vscode.window.showErrorMessage('Please open a workspace first.');
+			return;
+		}
+
+		const relativeDir = path.relative(workDir, path.dirname(fsPath));
+		const taskCfg = config.createOrGetTask(symbolName, relativeDir, "test");
+		console.log(taskCfg);
+		
+		await task.debugTest(config.resolveVariables(configs.global, taskCfg), workDir);
+	});
+
+	context.subscriptions.push(task.disposableStartDebug);
+	context.subscriptions.push(task.disposableTerminateDebug);
+	
+	context.subscriptions.push(paletteRunMain);
+	context.subscriptions.push(paletteDebugMain);
+	context.subscriptions.push(clickRunMain);
+	context.subscriptions.push(clickDebugMain);
+
+	context.subscriptions.push(paletteRunTest);
+	context.subscriptions.push(paletteDebugTest);
+	context.subscriptions.push(clickRunTest);
+	context.subscriptions.push(clickDebugTest);
 }
 
 export function deactivate() { }
