@@ -109,11 +109,17 @@ function createOrGetTask(configPath: string, symbolName: string, pkgPath: string
 	return resolvedConfig;
 }
 
-function execAsync(command: string) {
+function execAsync(command: string, envVars: Record<string, string> = {}) {
 	console.log(`exec: ${command}`);
 
 	return new Promise<{ stdout: string, stderr: string }>((resolve, reject) => {
-		child_process.exec(command, (error, stdout, stderr) => {
+		const options = {
+			env: {
+				...process.env,
+				...envVars,
+			}
+		};
+		child_process.exec(command, options, (error, stdout, stderr) => {
 			if (error) {
 				reject(error);
 				return;
@@ -124,14 +130,21 @@ function execAsync(command: string) {
 	});
 }
 
-function execAsync2(command: string, outputChannelName: string = 'kube-debug') {
+function execAsync2(command: string, outputChannelName: string = 'kube-debug', envVars: Record<string, string> = {}) {
 	console.log(`output: ${outputChannelName}, exec: ${command}`);
 
 	return new Promise<{ stdout: string, stderr: string }>((resolve, reject) => {
 		// Get or create output channel
 		let outputChannel = getOrCreateOutputChannel(outputChannelName);
 
-		const child = child_process.exec(command);
+		const options = {
+			env: {
+				...process.env,
+				...envVars,
+			}
+		};
+
+		const child = child_process.exec(command, options);
 
 		if (child.stdout) {
 			child.stdout.on('data', (data) => {
@@ -330,7 +343,19 @@ export function activate(context: vscode.ExtensionContext) {
 		await execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
 		await execAsync(`kubectl cp ${testFileDir}/${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
 		await execAsync(`rm -rf ${debugBin}`);
-		await execAsync2(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}"`, "Kube-Debug: Run Test");
+		
+		const envVars = {
+			ENV_VAR_1: 'xxx yyy'
+		};
+		let envVarString = "";
+		if (Object.keys(envVars || {}).length > 0)  {
+			envVarString = "export " + Object.entries(envVars)
+			.map(([key, value]) => `${key}='${value}'`)
+			.join(' ') + " && ";
+		}
+		
+
+		await execAsync2(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${envVarString} cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}"`, "Kube-Debug: Run Test");
 	});
 	let debugTestCmd = vscode.commands.registerCommand('kube-debug.debugTest', async (symbolName: string, fsPath: string) => {
 		const [workDir, confPath, configs] = loadConfig();
