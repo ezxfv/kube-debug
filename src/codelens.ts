@@ -10,12 +10,12 @@ export class GoCodeLensProvider implements vscode.CodeLensProvider {
 			if (symbol.name === 'main' || symbol.name.startsWith('Test')) {
 				const range = symbol.location.range;
 				const runCommand: vscode.Command = {
-					command: symbol.name === 'main' ? 'kube-debug.compileToPod' : 'kube-debug.runTest',
+					command: symbol.name === 'main' ? 'kube-debug.clickRunMain' : 'kube-debug.clickRunTest',
 					title: 'Kube Run',
 					arguments: [symbol.name, document.uri.fsPath]
 				};
 				const debugCommand: vscode.Command = {
-					command: symbol.name === 'main' ? 'kube-debug.attachToPod' : 'kube-debug.debugTest',
+					command: symbol.name === 'main' ? 'kube-debug.clickDebugMain' : 'kube-debug.clickDebugTest',
 					title: 'Kube Debug',
 					arguments: [symbol.name, document.uri.fsPath]
 				};

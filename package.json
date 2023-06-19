@@ -17,16 +17,20 @@
   "contributes": {
     "commands": [
       {
-        "command": "kube-debug.compileToPod",
-        "title": "KubeDebug: Compile To Pod"
+        "command": "kube-debug.paletteRunMain",
+        "title": "KubeDebug: Run Main"
       },
       {
-        "command": "kube-debug.attachToPod",
-        "title": "KubeDebug: Attach To Pod"
+        "command": "kube-debug.paletteDebugMain",
+        "title": "KubeDebug: Debug Main"
       },
       {
-        "command": "kube-debug.debugTest",
-        "title": "KubeDebug: Debug test in Pod"
+        "command": "kube-debug.paletteRunTest",
+        "title": "KubeDebug: Run Test"
+      },
+      {
+        "command": "kube-debug.paletteDebugTest",
+        "title": "KubeDebug: Debug Test"
       }
     ]
   },

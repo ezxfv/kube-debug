@@ -12,91 +12,157 @@ export function activate(context: vscode.ExtensionContext) {
 		clProvider,
 	));
 
-	let compileToPodCmd = vscode.commands.registerCommand('kube-debug.compileToPod', async () => {
+	let paletteRunMain = vscode.commands.registerCommand('kube-debug.paletteRunMain', async () => {
 		const [workDir, confPath, configs] = config.loadConfig();
 		if (!workDir) {
 			vscode.window.showErrorMessage('Please open a workspace first.');
 			return;
 		}
 
-		const confName = await vscode.window.showQuickPick(configs.configurations.map((c: any) => c.name), {
+		const confName = await vscode.window.showQuickPick(configs.buildTasks.map((c: any) => c.name), {
 			placeHolder: 'Select a configuration',
 		});
 
 		if (!confName) {
 			return;
 		}
-		const conf = configs.configurations.find((c: any) => c.name === confName);
-		if (!conf) {
+		const taskCfg = configs.buildTasks.find((c: any) => c.name === confName);
+		if (!taskCfg) {
 			vscode.window.showErrorMessage(`Configuration ${confName} not found.`);
 			return;
 		}
-		await task.runMain(conf, workDir);
+		await task.runMain(taskCfg, workDir);
 	});
 
-	let attachToPodCmd = vscode.commands.registerCommand('kube-debug.attachToPod', async () => {
+	let paletteDebugMain = vscode.commands.registerCommand('kube-debug.paletteDebugMain', async () => {
 		const [workDir, confPath, configs] = config.loadConfig();
 		if (!workDir) {
 			vscode.window.showErrorMessage('Please open a workspace first.');
 			return;
 		}
-		const confName = await vscode.window.showQuickPick(configs.configurations.map((c: any) => c.name), {
+		const confName = await vscode.window.showQuickPick(configs.buildTasks.map((c: any) => c.name), {
 			placeHolder: 'Select a configuration',
 		});
 
 		if (!confName) {
 			return;
 		}
-		const conf = configs.configurations.find((c: any) => c.name === confName);
-		if (!conf) {
+		const taskCfg = configs.buildTasks.find((c: any) => c.name === confName);
+		if (!taskCfg) {
 			vscode.window.showErrorMessage(`Configuration ${confName} not found.`);
 			return;
 		}
-		await task.debugMain(conf, workDir);
+		await task.debugMain(taskCfg, workDir);
 	});
-	let runTestCmd = vscode.commands.registerCommand('kube-debug.runTest', async (symbolName: string, fsPath: string) => {
+
+	let clickRunMain = vscode.commands.registerCommand('kube-debug.clickRunMain', async (symbolName: string, fsPath: string) => {
 		const [workDir, confPath, configs] = config.loadConfig();
 		if (!workDir) {
 			vscode.window.showErrorMessage('Please open a workspace first.');
 			return;
 		}
-		
 
-		const conf = configs.testConfigurations;
-		const testFileDir = path.dirname(fsPath);
-		const relativeDir = path.relative(workDir, testFileDir);
-		
-		const taskCfg = config.createOrGetTask(`${workDir}/.vscode/kube-debug-v2.json`, symbolName, relativeDir, "test");
+		const relativeDir = path.relative(workDir, path.dirname(fsPath));
+		const taskCfg = config.createOrGetTask(symbolName, relativeDir, "build");
 		console.log(taskCfg);
 
-		conf["testName"] = symbolName;
-		conf["pkgPath"] = relativeDir;
-
-		await task.runTest(conf, workDir);
+		await task.runMain(taskCfg, workDir);
 	});
-	let debugTestCmd = vscode.commands.registerCommand('kube-debug.debugTest', async (symbolName: string, fsPath: string) => {
+
+	let clickDebugMain = vscode.commands.registerCommand('kube-debug.clickDebugMain', async (symbolName: string, fsPath: string) => {
+		const [workDir, confPath, configs] = config.loadConfig();
+		if (!workDir) {
+			vscode.window.showErrorMessage('Please open a workspace first.');
+			return;
+		}
+		
+		const relativeDir = path.relative(workDir, path.dirname(fsPath));
+		const taskCfg = config.createOrGetTask(symbolName, relativeDir, "build");
+		console.log(taskCfg);
+
+		await task.debugMain(taskCfg, workDir);
+	});
+
+	let paletteRunTest = vscode.commands.registerCommand('kube-debug.paletteRunTest', async () => {
 		const [workDir, confPath, configs] = config.loadConfig();
 		if (!workDir) {
 			vscode.window.showErrorMessage('Please open a workspace first.');
 			return;
 		}
 
-		const conf = configs.testConfigurations;
-		let debugBin = `_debug_bin_${symbolName}`;
-		const testFileDir = path.dirname(fsPath);
-		const relativeDir = path.relative(workDir, testFileDir);
-		console.log(debugBin, relativeDir, path.dirname(fsPath));
+		const confName = await vscode.window.showQuickPick(configs.testTasks.map((c: any) => c.name), {
+			placeHolder: 'Select a configuration',
+		});
 
-		conf["testName"] = symbolName;
-		conf["pkgPath"] = relativeDir;
-		
-		await task.debugTest(conf, workDir);
+		if (!confName) {
+			return;
+		}
+		const taskCfg = configs.buildTasks.find((c: any) => c.name === confName);
+		if (!taskCfg) {
+			vscode.window.showErrorMessage(`Configuration ${confName} not found.`);
+			return;
+		}
+		await task.runTest(taskCfg, workDir);
 	});
 
-	context.subscriptions.push(compileToPodCmd);
-	context.subscriptions.push(attachToPodCmd);
-	context.subscriptions.push(runTestCmd);
-	context.subscriptions.push(debugTestCmd);
+	let paletteDebugTest = vscode.commands.registerCommand('kube-debug.paletteDebugTest', async () => {
+		const [workDir, confPath, configs] = config.loadConfig();
+		if (!workDir) {
+			vscode.window.showErrorMessage('Please open a workspace first.');
+			return;
+		}
+		const confName = await vscode.window.showQuickPick(configs.testTasks.map((c: any) => c.name), {
+			placeHolder: 'Select a configuration',
+		});
+
+		if (!confName) {
+			return;
+		}
+		const taskCfg = configs.testTasks.find((c: any) => c.name === confName);
+		if (!taskCfg) {
+			vscode.window.showErrorMessage(`Configuration ${confName} not found.`);
+			return;
+		}
+		await task.debugTest(taskCfg, workDir);
+	});
+
+	let clickRunTest = vscode.commands.registerCommand('kube-debug.clickRunTest', async (symbolName: string, fsPath: string) => {
+		const [workDir, confPath, configs] = config.loadConfig();
+		if (!workDir) {
+			vscode.window.showErrorMessage('Please open a workspace first.');
+			return;
+		}
+		
+		const relativeDir = path.relative(workDir, path.dirname(fsPath));
+		const taskCfg = config.createOrGetTask(symbolName, relativeDir, "test");
+		console.log(taskCfg);
+
+		await task.runTest(taskCfg, workDir);
+	});
+
+	let clickDebugTest = vscode.commands.registerCommand('kube-debug.clickDebugTest', async (symbolName: string, fsPath: string) => {
+		const [workDir, confPath, configs] = config.loadConfig();
+		if (!workDir) {
+			vscode.window.showErrorMessage('Please open a workspace first.');
+			return;
+		}
+
+		const relativeDir = path.relative(workDir, path.dirname(fsPath));
+		const taskCfg = config.createOrGetTask(symbolName, relativeDir, "test");
+		console.log(taskCfg);
+		
+		await task.debugTest(taskCfg, workDir);
+	});
+
+	context.subscriptions.push(paletteRunMain);
+	context.subscriptions.push(paletteDebugMain);
+	context.subscriptions.push(clickRunMain);
+	context.subscriptions.push(clickDebugMain);
+
+	context.subscriptions.push(paletteRunTest);
+	context.subscriptions.push(paletteDebugTest);
+	context.subscriptions.push(clickRunTest);
+	context.subscriptions.push(clickDebugTest);
 }
 
 export function deactivate() { }

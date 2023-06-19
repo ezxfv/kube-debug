@@ -57,20 +57,29 @@ function resolveVariables(config: any, value: any): any {
 	return resolvedValue;
 }
 
-export function loadConfig(confFile: string = ".vscode/kube-debug.json"): [string, string, any] {
+function getConfigFilePath(): string {
+	const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
+	if (!workspaceFolder) {
+		vscode.window.showErrorMessage('Please open a workspace first.');
+	}
+	return path.join(workspaceFolder.uri.fsPath, ".vscode/kube-debug-v2.json");
+}
+
+export function loadConfig(): [string, string, any] {
 	const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
 	if (!workspaceFolder) {
 		vscode.window.showErrorMessage('Please open a workspace first.');
 		return ['', '', null];
 	}
-	const configPath = `${workspaceFolder.uri.fsPath}/${confFile}`;
+	const configPath = getConfigFilePath();
 	const configContent = fs.readFileSync(configPath, 'utf-8');
 	const config = JSON.parse(configContent);
 	return [workspaceFolder.uri.fsPath, configPath, config];
 }
 
-export function createOrGetTask(configPath: string, symbolName: string, pkgPath: string, templateType: string): any {
-	const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+export function createOrGetTask(symbolName: string, pkgPath: string, templateType: string): any {
+	const confFile = getConfigFilePath();
+	const config = JSON.parse(fs.readFileSync(confFile, 'utf8'));
 	const tasks = (templateType === 'build' ? config.buildTasks : config.testTasks) || [];
 	const taskTemplate = templateType === 'build' ? config.buildTemplate : config.testTemplate;
 	const taskName = templateType === 'build' ? `${taskTemplate.name} ${pkgPath}` : `${taskTemplate.name} ${pkgPath}.${symbolName}`;
@@ -91,7 +100,7 @@ export function createOrGetTask(configPath: string, symbolName: string, pkgPath:
 	} else {
 		config.testTasks = tasks;
 	}
-	fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+	fs.writeFileSync(confFile, JSON.stringify(config, null, 2), 'utf8');
 
 	const resolvedConfig = resolveVariables(config.global, newTask);
 	return resolvedConfig;

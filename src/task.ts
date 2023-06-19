@@ -4,27 +4,27 @@ import * as child_process from 'child_process';
 
 import * as util from "./util";
 
-export async function runMain(conf: any, workDir?: string): Promise<void> {
-    const goEnv = util.envStr(conf.goEnv || {});
+export async function runMain(taskCfg: any, workDir?: string): Promise<void> {
+    const goEnv = util.envStr(taskCfg.goEnv || {});
 
-    process.chdir(conf.cwd || workDir);
-    await util.execAsync(`${goEnv} ${conf.buildCommand}`);
-    const { stdout: containerName } = await util.execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
-    await util.execAsync(`kubectl cp ${conf.binary} ${conf.namespace}/${conf.pod}:${conf.targetPath} -c ${containerName}`);
-    await util.execAsync(`rm -rf ${conf.binary}`);
-    await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- pkill -SIGUSR1 -f "python.*supervisor.py"`);
+    process.chdir(taskCfg.cwd || workDir);
+    await util.execAsync(`${goEnv} ${taskCfg.buildCommand}`);
+    const { stdout: containerName } = await util.execAsync(`kubectl get pod ${taskCfg.pod} -n ${taskCfg.namespace} -o jsonpath="{.spec.containers[0].name}"`);
+    await util.execAsync(`kubectl cp ${taskCfg.binary} ${taskCfg.namespace}/${taskCfg.pod}:${taskCfg.targetPath} -c ${containerName}`);
+    await util.execAsync(`rm -rf ${taskCfg.binary}`);
+    await util.execAsync(`kubectl exec ${taskCfg.pod} -n ${taskCfg.namespace} -c ${containerName} -- pkill -SIGUSR1 -f "python.*supervisor.py"`);
 
-    vscode.window.showInformationMessage(`copied new binary to pod: ${conf.pod}`);
+    vscode.window.showInformationMessage(`copied new binary to pod: ${taskCfg.pod}`);
 }
 
-export async function debugMain(conf: any, workDir?: string): Promise<void> {
-    let portForwardProc = child_process.spawn('kubectl', ['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2345:2345']);
+export async function debugMain(taskCfg: any, workDir?: string): Promise<void> {
+    let portForwardProc = child_process.spawn('kubectl', ['port-forward', '-n', `${taskCfg.namespace || "default"}`, `pods/${taskCfg.pod}`, '2345:2345']);
     await util.sleep(1000);
 
-    const { stdout: containerName } = await util.execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
+    const { stdout: containerName } = await util.execAsync(`kubectl get pod ${taskCfg.pod} -n ${taskCfg.namespace} -o jsonpath="{.spec.containers[0].name}"`);
 
-    const logPath = path.join(path.dirname(conf.targetPath), "debug.log");
-    let command = `kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- tail -n 50 ${logPath} -f`;
+    const logPath = path.join(path.dirname(taskCfg.targetPath), "debug.log");
+    let command = `kubectl exec ${taskCfg.pod} -n ${taskCfg.namespace} -c ${containerName} -- tail -n 50 ${logPath} -f`;
     let outputChannelName = "Kube-Debug: Tail Log";
     let outputChannel = util.getOrCreateOutputChannel(outputChannelName);
 
@@ -44,7 +44,7 @@ export async function debugMain(conf: any, workDir?: string): Promise<void> {
         }
     });
 
-    let debugTaskName = `Attach to Kube Pod ${conf.namespace || "default"}/${conf.pod}`;
+    let debugTaskName = `Attach to Kube Pod ${taskCfg.namespace || "default"}/${taskCfg.pod}`;
     vscode.debug.startDebugging(undefined, {
         type: 'go',
         request: 'attach',
@@ -66,56 +66,56 @@ export async function debugMain(conf: any, workDir?: string): Promise<void> {
     });
 }
 
-export async function runTest(conf: any, workDir?: string): Promise<void> {
-    const symbolName = conf.testName;
+export async function runTest(taskCfg: any, workDir?: string): Promise<void> {
+    const symbolName = taskCfg.testName;
     let debugBin = `_debug_bin_${symbolName}`;
-    const relativeDir = conf.pkgPath;
-    const goEnv = util.envStr(conf.goEnv || {});
+    const relativeDir = taskCfg.pkgPath;
+    const goEnv = util.envStr(taskCfg.goEnv || {});
 
     process.chdir(path.join(util.getWorkspaceDir(), relativeDir));
 
     await util.execAsync(`${goEnv} go test -c -gcflags="all=-N -l" -o ${debugBin}`);
-    const { stdout: containerName } = await util.execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
-    const targetBin = path.join(conf.targetDir, relativeDir, debugBin);
+    const { stdout: containerName } = await util.execAsync(`kubectl get pod ${taskCfg.pod} -n ${taskCfg.namespace} -o jsonpath="{.spec.containers[0].name}"`);
+    const targetBin = path.join(taskCfg.targetDir, relativeDir, debugBin);
     const targetDir = path.dirname(targetBin);
-    const gotestArgs = (conf.args || []).join(" ");
+    const gotestArgs = (taskCfg.args || []).join(" ");
 
-    await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
-    await util.execAsync(`kubectl cp ${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
+    await util.execAsync(`kubectl exec ${taskCfg.pod} -n ${taskCfg.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
+    await util.execAsync(`kubectl cp ${debugBin} ${taskCfg.namespace}/${taskCfg.pod}:${targetBin} -c ${containerName}`);
     await util.execAsync(`rm -rf ${debugBin}`);
 
     let envVarString = "";
-    if (Object.keys(conf.env || {}).length > 0) {
-        envVarString = "export " + Object.entries(conf.env)
+    if (Object.keys(taskCfg.env || {}).length > 0) {
+        envVarString = "export " + Object.entries(taskCfg.env)
             .map(([key, value]) => `${key}='${value}'`)
             .join(' ') + " && ";
     }
 
-    await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${envVarString} cd ${targetDir} && ./${debugBin} ${gotestArgs} -test.run ${symbolName}"`, {}, "Kube-Debug: Run Test");
+    await util.execAsync(`kubectl exec ${taskCfg.pod} -n ${taskCfg.namespace} -c ${containerName} -- bash -c "${envVarString} cd ${targetDir} && ./${debugBin} ${gotestArgs} -test.run ${symbolName}"`, {}, "Kube-Debug: Run Test");
 }
 
-export async function debugTest(conf: any, workDir?: string): Promise<void> {
-    const symbolName = conf.testName;
+export async function debugTest(taskCfg: any, workDir?: string): Promise<void> {
+    const symbolName = taskCfg.testName;
     let debugBin = `_debug_bin_${symbolName}`;
-    const relativeDir = conf.pkgPath;
-    const goEnv = util.envStr(conf.goEnv || {});
+    const relativeDir = taskCfg.pkgPath;
+    const goEnv = util.envStr(taskCfg.goEnv || {});
     const localDir = path.join(util.getWorkspaceDir(), relativeDir);
 
     process.chdir(localDir);
 
     await util.execAsync(`${goEnv} go test -c -gcflags="all=-N -l" -o ${debugBin}`);
-    const { stdout: containerName } = await util.execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
-    const targetBin = path.join(conf.targetDir, relativeDir, debugBin);
+    const { stdout: containerName } = await util.execAsync(`kubectl get pod ${taskCfg.pod} -n ${taskCfg.namespace} -o jsonpath="{.spec.containers[0].name}"`);
+    const targetBin = path.join(taskCfg.targetDir, relativeDir, debugBin);
     const targetDir = path.dirname(targetBin);
-    const gotestArgs = (conf.args || []).join(" ");
+    const gotestArgs = (taskCfg.args || []).join(" ");
 
-    await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
-    await util.execAsync(`kubectl cp ${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
+    await util.execAsync(`kubectl exec ${taskCfg.pod} -n ${taskCfg.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
+    await util.execAsync(`kubectl cp ${debugBin} ${taskCfg.namespace}/${taskCfg.pod}:${targetBin} -c ${containerName}`);
     await util.execAsync(`rm -rf ${debugBin}`);
 
-    const procEnv = util.envStr(conf.env);
+    const procEnv = util.envStr(taskCfg.env);
 
-    let command = `kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${procEnv} cd ${targetDir} && dlv exec --headless --listen=:2346 --api-version=2 -- ${targetBin} ${gotestArgs} -test.run ${symbolName}"`;
+    let command = `kubectl exec ${taskCfg.pod} -n ${taskCfg.namespace} -c ${containerName} -- bash -c "${procEnv} cd ${targetDir} && dlv exec --headless --listen=:2346 --api-version=2 -- ${targetBin} ${gotestArgs} -test.run ${symbolName}"`;
     console.log(localDir, workDir, targetDir, util.getWorkspaceDir());
     console.log(command);
 
@@ -135,10 +135,10 @@ export async function debugTest(conf: any, workDir?: string): Promise<void> {
         }
     });
 
-    let portForwardProc = child_process.spawn('kubectl', ['port-forward', '-n', `${conf.namespace || "default"}`, `pods/${conf.pod}`, '2346:2346']);
+    let portForwardProc = child_process.spawn('kubectl', ['port-forward', '-n', `${taskCfg.namespace || "default"}`, `pods/${taskCfg.pod}`, '2346:2346']);
     await util.sleep(1000);
 
-    let debugTaskName = `Debug Test ${symbolName} in Kube Pod ${conf.namespace || "default"}/${conf.pod}`;
+    let debugTaskName = `Debug Test ${symbolName} in Kube Pod ${taskCfg.namespace || "default"}/${taskCfg.pod}`;
     vscode.debug.startDebugging(undefined, {
         type: 'go',
         request: 'attach',
