@@ -16,7 +16,6 @@ This extension provides a command that executes the following steps:
 - 支持回传多个日志信息
 - 支持定义preTask
 - 支持侧面栏展示
-- 任务完成时发送通知
 
 ## Requirements
 

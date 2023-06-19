@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
-import * as lodash from 'lodash';
 import * as path from 'path';
 import * as fs from 'fs';
+
+import * as lodash from 'lodash';
+
 
 function resolveVariables(config: any, value: any): any {
 	let variables = {
@@ -10,8 +12,7 @@ function resolveVariables(config: any, value: any): any {
 		"workspaceFolder": vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : '',
 		"workspaceFolderBasename": vscode.workspace.workspaceFolders ? path.basename(vscode.workspace.workspaceFolders[0].uri.fsPath) : '',
 		"file": vscode.window.activeTextEditor ? vscode.window.activeTextEditor.document.uri.fsPath : '',
-		"fileWorkspaceFolder": vscode.window.activeTextEditor ? vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri).uri.fsPath : '',
-		"relativeFile": vscode.window.activeTextEditor ? vscode.workspace.asRelativePath(vscode.window.activeTextEditor.document.uri.fsPath) : '',
+		"fileWorkspaceFolder": vscode.window.activeTextEditor ? (vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri) || {}).uri?.fsPath : '',		"relativeFile": vscode.window.activeTextEditor ? vscode.workspace.asRelativePath(vscode.window.activeTextEditor.document.uri.fsPath) : '',
 		"relativeFileDirname": vscode.window.activeTextEditor ? path.dirname(vscode.workspace.asRelativePath(vscode.window.activeTextEditor.document.uri.fsPath)) : '',
 		"fileBasename": vscode.window.activeTextEditor ? path.basename(vscode.window.activeTextEditor.document.uri.fsPath) : '',
 		"fileBasenameNoExtension": vscode.window.activeTextEditor ? path.basename(vscode.window.activeTextEditor.document.uri.fsPath, path.extname(vscode.window.activeTextEditor.document.uri.fsPath)) : '',
@@ -72,7 +73,7 @@ export function createOrGetTask(configPath: string, symbolName: string, pkgPath:
 	const taskTemplate = templateType === 'build' ? config.buildTemplate : config.testTemplate;
 	const taskName = templateType === 'build' ? `${taskTemplate.name} ${pkgPath}` : `${taskTemplate.name} ${pkgPath}.${symbolName}`;
 
-	const taskIndex = tasks.findIndex((task) => task.name === taskName);
+	const taskIndex = tasks.findIndex((task: { name: string }) => task.name === taskName);
 	if (taskIndex > -1) {
 		const oldTask = tasks[taskIndex];
 		return resolveVariables(config.global, oldTask);
