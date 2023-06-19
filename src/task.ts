@@ -5,8 +5,10 @@ import * as child_process from 'child_process';
 import * as util from "./util";
 
 export async function runMain(conf: any, workDir?: string): Promise<void> {
+    const goEnv = util.envStr(conf.goEnv || {});
+
     process.chdir(conf.cwd || workDir);
-    await util.execAsync(`${conf.buildCommand}`);
+    await util.execAsync(`${goEnv} ${conf.buildCommand}`);
     const { stdout: containerName } = await util.execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
     await util.execAsync(`kubectl cp ${conf.binary} ${conf.namespace}/${conf.pod}:${conf.targetPath} -c ${containerName}`);
     await util.execAsync(`rm -rf ${conf.binary}`);
@@ -68,15 +70,15 @@ export async function runTest(conf: any, workDir?: string): Promise<void> {
     const symbolName = conf.testName;
     let debugBin = `_debug_bin_${symbolName}`;
     const relativeDir = conf.pkgPath;
-    const goArch = process.arch == "arm64"? "arm64": "amd64";
+    const goEnv = util.envStr(conf.goEnv || {});
 
     process.chdir(path.join(util.getWorkspaceDir(), relativeDir));
 
-    await util.execAsync(`CGO_ENABLED=0 GOOS=linux GOARCH=${goArch} go test -c -gcflags="all=-N -l" -o ${debugBin}`);
+    await util.execAsync(`${goEnv} go test -c -gcflags="all=-N -l" -o ${debugBin}`);
     const { stdout: containerName } = await util.execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
     const targetBin = path.join(conf.targetDir, relativeDir, debugBin);
     const targetDir = path.dirname(targetBin);
-    const gotestFlags = (conf.toolArgs || []).join(" ");
+    const gotestArgs = (conf.args || []).join(" ");
 
     await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
     await util.execAsync(`kubectl cp ${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
@@ -89,36 +91,31 @@ export async function runTest(conf: any, workDir?: string): Promise<void> {
             .join(' ') + " && ";
     }
 
-    await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${envVarString} cd ${targetDir} && ./${debugBin} ${gotestFlags} -test.run ${symbolName}"`, {}, "Kube-Debug: Run Test");
+    await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${envVarString} cd ${targetDir} && ./${debugBin} ${gotestArgs} -test.run ${symbolName}"`, {}, "Kube-Debug: Run Test");
 }
 
 export async function debugTest(conf: any, workDir?: string): Promise<void> {
     const symbolName = conf.testName;
     let debugBin = `_debug_bin_${symbolName}`;
     const relativeDir = conf.pkgPath;
-    const goArch = process.arch == "arm64"? "arm64": "amd64";
-
+    const goEnv = util.envStr(conf.goEnv || {});
     const localDir = path.join(util.getWorkspaceDir(), relativeDir);
+
     process.chdir(localDir);
 
-    await util.execAsync(`CGO_ENABLED=0 GOOS=linux GOARCH=${goArch} go test -c -gcflags="all=-N -l" -o ${debugBin}`);
+    await util.execAsync(`${goEnv} go test -c -gcflags="all=-N -l" -o ${debugBin}`);
     const { stdout: containerName } = await util.execAsync(`kubectl get pod ${conf.pod} -n ${conf.namespace} -o jsonpath="{.spec.containers[0].name}"`);
     const targetBin = path.join(conf.targetDir, relativeDir, debugBin);
     const targetDir = path.dirname(targetBin);
-    const gotestFlags = (conf.toolArgs || []).join(" ");
+    const gotestArgs = (conf.args || []).join(" ");
 
     await util.execAsync(`kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- mkdir -p ${targetDir}`);
     await util.execAsync(`kubectl cp ${debugBin} ${conf.namespace}/${conf.pod}:${targetBin} -c ${containerName}`);
     await util.execAsync(`rm -rf ${debugBin}`);
 
-    let envVarString = "";
-    if (Object.keys(conf.env || {}).length > 0) {
-        envVarString = "export " + Object.entries(conf.env)
-            .map(([key, value]) => `${key}='${value}'`)
-            .join(' ') + " && ";
-    }
+    const procEnv = util.envStr(conf.env);
 
-    let command = `kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${envVarString} cd ${targetDir} && dlv exec --headless --listen=:2346 --api-version=2 -- ${targetBin} ${gotestFlags} -test.run ${symbolName}"`;
+    let command = `kubectl exec ${conf.pod} -n ${conf.namespace} -c ${containerName} -- bash -c "${procEnv} cd ${targetDir} && dlv exec --headless --listen=:2346 --api-version=2 -- ${targetBin} ${gotestArgs} -test.run ${symbolName}"`;
     console.log(localDir, workDir, targetDir, util.getWorkspaceDir());
     console.log(command);
 

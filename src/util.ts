@@ -83,3 +83,13 @@ export function execAsync(command: string, envVars: Record<string, string> = {},
 		});
 	});
 }
+
+export function envStr(env: any): string {
+	let envVarString = "";
+    if (Object.keys(env || {}).length > 0) {
+        envVarString = "export " + Object.entries(env)
+            .map(([key, value]) => `${key}='${value}'`)
+            .join(' ') + " && ";
+    }
+	return envVarString;
+}

@@ -9,6 +9,7 @@ import * as lodash from 'lodash';
 function resolveVariables(config: any, value: any): any {
 	let variables = {
 		"userHome": os.homedir(),
+		"arch": process.arch === "arm64"? "arm64": "amd64",
 		"workspaceFolder": vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : '',
 		"workspaceFolderBasename": vscode.workspace.workspaceFolders ? path.basename(vscode.workspace.workspaceFolders[0].uri.fsPath) : '',
 		"file": vscode.window.activeTextEditor ? vscode.window.activeTextEditor.document.uri.fsPath : '',
@@ -44,15 +45,16 @@ function resolveVariables(config: any, value: any): any {
 		return value;
 	};
 
-	value = resolveValue(value);
+	let resolvedValue = resolveValue(value);
+	const resolvedConfig = resolveValue(config);
 
-	for (const key of Object.keys(config)) {
-		if (!value[key]) {
-			value[key] = config[key];
+	for (const key of Object.keys(resolvedConfig)) {
+		if (!resolvedValue[key]) {
+			resolvedValue[key] = resolvedConfig[key];
 		}
 	}
 
-	return value;
+	return resolvedValue;
 }
 
 export function loadConfig(confFile: string = ".vscode/kube-debug.json"): [string, string, any] {
